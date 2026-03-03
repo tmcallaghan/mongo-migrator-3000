@@ -43,6 +43,8 @@ long-term goals
 questions
 - Q: support unique secondary indexes?
 - Q: how to handle unique _id or secondary index violations when not resuming?
+- Q: support transactions?
+- Q: support DDL?
 
 DL schema/algorithm
 - capture all participating collections (namespaces) [collectionsMigrating]
