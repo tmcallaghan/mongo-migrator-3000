@@ -8,19 +8,23 @@ Easy, performant, and correct data migrations between document databases
 prep
 - [ ] assess source
 - [ ] persist collection information
+- [ ] support single collection, single database, everything
+- [ ] exception by namespace
 
 data load (DL)
 - [ ] must support resume, use replace() for resuming chunks
-- [ ] collection chunker, persist
-- [ ] drive DL from chunks
+- [ ] collection chunker(s), persist work into queue collection - hi/low
+- [ ] drive FL from chunks
+- [ ] dynamically increase/decrease concurrency and throughput
 
 change data capture (CDC)
 - [ ] readahead for buffercache warm up
 - [ ] 1:1 read/write CDC
 - [ ] 1:n read/write CDC
+- [ ] updates as updates, no fullDocumentLookup
 
 observability
-- all via persistence
+- all via persistence in target
 - [ ] tui
 - [ ] web page
 - [ ] aws cloudwatch
@@ -35,10 +39,10 @@ long-term goals
 - [ ] begin gather of CDC immediately, use S3 or other
 - [ ] chunked CDC gather
 - [ ] if using zstd/dict in AWS DocumentDB, load ~1000 and await dictionary
-- [ ] dynamic scaling of read/write DL concurrency
 - [ ] if 1:1 read/write CDC, server side hashing/filtering
-- [ ] begin CDC for completed collection DL
+- [ ] begin CDC for completed collection FL
 - [ ] test performance of transactionally wrapped CDC bulk write operations
+- [ ] filtering by expression
 
 questions
 - Q: support unique secondary indexes?
