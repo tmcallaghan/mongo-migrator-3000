@@ -69,7 +69,14 @@ def segmenter(appConfig):
 
     while not allDone:
         currentId = col.find_one(filter={"_id":{"$gt":currentId["_id"]}},projection={"_id":True},sort=[("_id",pymongo.ASCENDING)],skip=rowsPerChunk)
+
         print("{}".format(currentId))
+
+        # no more boundaries
+        if currentId is None:
+            allDone = True
+            continue
+
         numDocsTotal += rowsPerChunk
         pctDone = numDocsTotal/(numDocuments - rowsPerChunk)*100
         elapsedSecs = int(time.time() - queryStartTime)
