@@ -44,8 +44,8 @@ def segmenter(appConfig):
     sourceDb = appConfig["sourceNs"].split('.',1)[0]
     sourceColl = appConfig["sourceNs"].split('.',1)[1]
     client = pymongo.MongoClient(host=appConfig['sourceUri'])
-    db = client[appConfig[sourceDb]]
-    #col = db[appConfig[sourceColl]]
+    db = client[sourceDb]
+    #col = db[sourceColl]
 
     collStats = db.command("collStats",appConfig[sourceColl])
     numDocuments = collStats['count']
