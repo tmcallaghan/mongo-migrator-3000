@@ -47,7 +47,7 @@ def segmenter(appConfig):
     db = client[sourceDb]
     #col = db[sourceColl]
 
-    collStats = db.command("collStats",appConfig[sourceColl])
+    collStats = db.command("collStats",sourceColl)
     numDocuments = collStats['count']
     #feedbackDocuments = int(numDocuments/appConfig['numSegments'])
     #progressDocuments = int((numDocuments - feedbackDocuments)*0.01)
