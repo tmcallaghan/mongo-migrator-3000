@@ -37,15 +37,11 @@ def segmenter(appConfig):
     # get boundaries by performing server-side skips
     warnings.filterwarnings("ignore","You appear to be connected to a DocumentDB cluster.")
 
-    #boundaryList = []
-
-    #numBoundaries = appConfig['numSegments'] - 1
-
     sourceDb = appConfig["sourceNs"].split('.',1)[0]
     sourceColl = appConfig["sourceNs"].split('.',1)[1]
     client = pymongo.MongoClient(host=appConfig['sourceUri'])
     db = client[sourceDb]
-    #col = db[sourceColl]
+    col = db[sourceColl]
 
     chunkGbTarget = appConfig['chunkGbTarget']
 
@@ -54,17 +50,15 @@ def segmenter(appConfig):
     avgObjSize = int(collStats['avgObjSize'])
 
     rowsPerChunk = int(chunkGbTarget * 1024 * 1024 * 1024 / avgObjSize)
-    #feedbackDocuments = int(numDocuments/appConfig['numSegments'])
-    #progressDocuments = int((numDocuments - feedbackDocuments)*0.01)
 
-    print("{}".format(collStats))
+    logIt(0,"{}".format(collStats))
 
-    print("")
-    print("collection {}.{} contains {} documents".format(sourceDb,sourceColl,numDocuments))
-    print("calculated {} documents for a {} GB chunk of {} average object (bytes)".format(rowsPerChunk,chunkGbTarget,avgObjSize))
-    #print("finding _id values for {} chunks, approximately {} documents in each".format(appConfig['numSegments'],feedbackDocuments))
+    logIt(0,"")
+    logIt(0,"+ collection {}.{} contains {} documents".format(sourceDb,sourceColl,numDocuments))
+    logIt(0,"+ calculated {} documents for a {} GB chunk of {} average object (bytes)".format(rowsPerChunk,chunkGbTarget,avgObjSize))
 
-    '''
+    allDone = False
+
     queryStartTime = time.time()
 
     # get the first _id
@@ -72,6 +66,18 @@ def segmenter(appConfig):
     print("  found first _id")
     numDocsTotal = 0
 
+    while not allDone:
+        currentId = col.find_one(filter={"_id":{"$gt":currentId["_id"]}},projection={"_id":True},sort=[("_id",pymongo.ASCENDING)],skip=rowsPerChunk)
+        print("{}".format(currentId))
+        numDocsTotal += rowsPerChunk
+        pctDone = numDocsTotal/(numDocuments - rowsPerChunk)*100
+        elapsedSecs = int(time.time() - queryStartTime)
+        estimatedSecsToDone = int(((100/pctDone)*elapsedSecs)-elapsedSecs)
+        logIt(0,"  boundary {:3d} - {} {} | done in approximately {} seconds".format(x+1,type(currentId["_id"]),currentId["_id"],estimatedSecsToDone))
+        #boundaryList.append(currentId["_id"])
+
+
+    '''
     for x in range(numBoundaries):
         currentId = col.find_one(filter={"_id":{"$gt":currentId["_id"]}},projection={"_id":True},sort=[("_id",pymongo.ASCENDING)],skip=feedbackDocuments)
         numDocsTotal += feedbackDocuments
