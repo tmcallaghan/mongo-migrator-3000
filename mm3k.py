@@ -53,7 +53,7 @@ def segmenter(appConfig):
     numDocuments = collStats['count']
     avgObjSize = int(collStats['avgObjSize'])
 
-    rowsPerChunk = int(chunkGbTarget * 1024 * 1024 * 1024 / avgObjSize
+    rowsPerChunk = int(chunkGbTarget * 1024 * 1024 * 1024 / avgObjSize)
     #feedbackDocuments = int(numDocuments/appConfig['numSegments'])
     #progressDocuments = int((numDocuments - feedbackDocuments)*0.01)
 
