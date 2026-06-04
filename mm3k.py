@@ -47,8 +47,12 @@ def segmenter(appConfig):
     db = client[sourceDb]
     #col = db[sourceColl]
 
+    chunkGbTarget = appConfig['chunkGbTarget']
+
     collStats = db.command("collStats",sourceColl)
     numDocuments = collStats['count']
+
+    rowsPerChunk = chunkGbTarget * 1024 * 1024 * 1024 / collStats['avgObjSize']
     #feedbackDocuments = int(numDocuments/appConfig['numSegments'])
     #progressDocuments = int((numDocuments - feedbackDocuments)*0.01)
 
@@ -56,6 +60,7 @@ def segmenter(appConfig):
 
     print("")
     print("collection {}.{} contains {} documents".format(sourceDb,sourceColl,numDocuments))
+    print("calculated {} documents for a {} GB chunk of {} average object (bytes)".format(rowsPerChunk,chunkGbTarget,collStats['avgObjSize']))
     #print("finding _id values for {} chunks, approximately {} documents in each".format(appConfig['numSegments'],feedbackDocuments))
 
     '''
@@ -103,6 +108,7 @@ def main():
     parser.add_argument('--target-namespace',required=False,type=str,help='Target Namespace as <database>.<collection>, defaults to --source-namespace')
     parser.add_argument('--verbose',required=False,action='store_true',help='Enable verbose logging')
     parser.add_argument('--num-full-load-workers',required=False,default=10,type=int,help='Number of workers performing full load')
+    parser.add_argument('--chunk-gb-target',required=False,default=1,type=int,help='Target/maximum GB for each full load chunk')
                         
     #parser.add_argument('--feedback-seconds',required=False,type=int,default=60,help='Number of seconds between feedback output')
     #parser.add_argument('--max-inserts-per-batch',required=False,type=int,default=100,help='Maximum number of inserts to include in a single batch')
@@ -129,6 +135,7 @@ def main():
         appConfig['targetNs'] = args.target_namespace
     appConfig['verboseLogging'] = args.verbose
     appConfig['numFullLoadWorkers'] = int(args.num_full_load_workers)
+    appConfig['chunkGbTarget'] = int(args.chunk_gb_target)
 
     #appConfig['maxInsertsPerBatch'] = args.max_inserts_per_batch
     #appConfig['feedbackSeconds'] = args.feedback_seconds
