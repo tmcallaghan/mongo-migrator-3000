@@ -155,7 +155,7 @@ def main():
     mp.set_start_method('spawn')
     q = mp.Manager().Queue()
 
-    tController = threading.Thread(target=reporter,args=(appConfig,q))
+    tController = threading.Thread(target=segmenter,args=(appConfig,q))
     tController.start()
 
     #t = threading.Thread(target=reporter,args=(appConfig,q))
