@@ -51,11 +51,9 @@ def segmenter(appConfig):
 
     rowsPerChunk = int(chunkGbTarget * 1024 * 1024 * 1024 / avgObjSize)
 
-    logIt(0,"{}".format(collStats))
-
-    logIt(0,"")
-    logIt(0,"+ collection {}.{} contains {} documents".format(sourceDb,sourceColl,numDocuments))
-    logIt(0,"+ calculated {} documents for a {} GB chunk of {} average object (bytes)".format(rowsPerChunk,chunkGbTarget,avgObjSize))
+    #logIt(0,"{}".format(collStats))
+    logIt(0,"collection {}.{} contains {} documents".format(sourceDb,sourceColl,numDocuments))
+    logIt(0,"calculated {} documents for a {} GB chunk of {} average object (bytes)".format(rowsPerChunk,chunkGbTarget,avgObjSize))
 
     allDone = False
 
@@ -69,8 +67,6 @@ def segmenter(appConfig):
 
     while not allDone:
         currentId = col.find_one(filter={"_id":{"$gt":currentId["_id"]}},projection={"_id":True},sort=[("_id",pymongo.ASCENDING)],skip=rowsPerChunk)
-
-        print("{}".format(currentId))
 
         # no more boundaries
         if currentId is None:
