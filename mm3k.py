@@ -61,7 +61,7 @@ def segmenter(appConfig):
 
     # get the first _id
     currentId = col.find_one(filter=None,projection={"_id":True},sort=[("_id",pymongo.ASCENDING)])
-    print("  found first _id")
+    #print("  found first _id")
     numDocsTotal = 0
     numBoundaries = 0
 
@@ -78,7 +78,7 @@ def segmenter(appConfig):
         elapsedSecs = int(time.time() - queryStartTime)
         estimatedSecsToDone = int(((100/pctDone)*elapsedSecs)-elapsedSecs)
         numBoundaries += 1
-        logIt(0,"  boundary {:3d} - {} {} | done in approximately {} seconds".format(numBoundaries,type(currentId["_id"]),currentId["_id"],estimatedSecsToDone))
+        logIt(0,"boundary {:3d} - {} {} | done in approximately {} seconds".format(numBoundaries,type(currentId["_id"]),currentId["_id"],estimatedSecsToDone))
         #boundaryList.append(currentId["_id"])
 
 
