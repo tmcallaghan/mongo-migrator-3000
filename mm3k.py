@@ -51,8 +51,9 @@ def segmenter(appConfig):
 
     collStats = db.command("collStats",sourceColl)
     numDocuments = collStats['count']
+    avgObjSize = int(collStats['avgObjSize'])
 
-    rowsPerChunk = chunkGbTarget * 1024 * 1024 * 1024 / collStats['avgObjSize']
+    rowsPerChunk = int(chunkGbTarget * 1024 * 1024 * 1024 / avgObjSize
     #feedbackDocuments = int(numDocuments/appConfig['numSegments'])
     #progressDocuments = int((numDocuments - feedbackDocuments)*0.01)
 
@@ -60,7 +61,7 @@ def segmenter(appConfig):
 
     print("")
     print("collection {}.{} contains {} documents".format(sourceDb,sourceColl,numDocuments))
-    print("calculated {} documents for a {} GB chunk of {} average object (bytes)".format(rowsPerChunk,chunkGbTarget,collStats['avgObjSize']))
+    print("calculated {} documents for a {} GB chunk of {} average object (bytes)".format(rowsPerChunk,chunkGbTarget,avgObjSize))
     #print("finding _id values for {} chunks, approximately {} documents in each".format(appConfig['numSegments'],feedbackDocuments))
 
     '''
