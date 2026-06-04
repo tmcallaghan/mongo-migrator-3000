@@ -156,7 +156,7 @@ def main():
     q = mp.Manager().Queue()
     #tController = threading.Thread(target=segmenter,args=(appConfig,q))
 
-    tController = threading.Thread(target=segmenter,args=(appConfig))
+    tController = threading.Thread(target=segmenter,args=(appConfig,))
     tController.start()
 
     #t = threading.Thread(target=reporter,args=(appConfig,q))
