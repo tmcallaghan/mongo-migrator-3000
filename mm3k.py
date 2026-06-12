@@ -39,42 +39,79 @@ def coordinator(appConfig):
 
     # wait for all children threads and processes to be gone
         
-    client.close()
+    targetClient.close()
 
 
 def catalogger(appConfig):
+    # catalog the effort - just namespaces
+    warnings.filterwarnings("ignore","You appear to be connected to a DocumentDB cluster.")
+
+    sourceClient = pymongo.MongoClient(host=appConfig['sourceUri'])
+    targetClient = pymongo.MongoClient(host=appConfig['targetUri'])
+    targetDb = targetClient[appConfig['mm3kDatabase']]
+    targetColl = targetDb['collections']
+
+    dbDict = sourceClient.admin.command("listDatabases",nameOnly=True,filter={"name":{"$nin":['admin','config','local','system']}})['databases']
+    for thisDb in dbDict:
+        #print(thisDb)
+        logIt(-1,"catalogging database {}".format(thisDb['name']))
+        collCursor = sourceClient[thisDb['name']].list_collections()
+        for thisColl in collCursor:
+            #print(thisColl)
+            result = targetColl.insert_one({'database':thisDb['name'],'collection':thisColl['name'],'status':'CATALOGGED'})
+
+    sourceClient.close()
+    targetClient.close()
+
+
+def inspector(appConfig):
     # catalog the effort - namespaces and their document count, average document size, size on disk
     warnings.filterwarnings("ignore","You appear to be connected to a DocumentDB cluster.")
 
-    sourceDb = appConfig["sourceNs"].split('.',1)[0]
-    sourceColl = appConfig["sourceNs"].split('.',1)[1]
-    client = pymongo.MongoClient(host=appConfig['sourceUri'])
-    db = client[sourceDb]
-    col = db[sourceColl]
-
     chunkGbTarget = appConfig['chunkGbTarget']
 
-    collStats = db.command("collStats",sourceColl)
-    numDocuments = collStats['count']
-    avgObjSize = int(collStats['avgObjSize'])
+    sourceClient = pymongo.MongoClient(host=appConfig['sourceUri'])
 
-    rowsPerChunk = int(chunkGbTarget * 1024 * 1024 * 1024 / avgObjSize)
+    targetClient = pymongo.MongoClient(host=appConfig['targetUri'])
+    targetDb = targetClient[appConfig['mm3kDatabase']]
+    targetColl = targetDb['collections']
 
+    allDone = False
+    numNoDocuments = 0
 
-    # does the database already exist
-    
-    # if so we must be resuming, not starting
+    # loop through catalogged collections
+    while not allDone:
+        thisCollection = targetColl.find_one_and_update({'status':'CATALOGGED'},{'$set':{'status':'INSPECTING'}})
+        if thisCollection == None:
+            # wait and try again
+            logIt(-1,'no work found # {}'.format(numNoDocuments))
+            numNoDocuments += 1
+            if numNoDocuments >= 5:
+                allDone = True
+            else:
+                time.sleep(1)
+            continue
+        logIt(-1,'inspecting {}.{}'.format(thisCollection['database'],thisCollection['collection']))
+        numNoDocuments = 0
 
-    # get things started - cataloggers
+        db = sourceClient[thisCollection['database']]
+        collStats = db.command("collStats",thisCollection['collection'])
+        numDocuments = collStats['count']
+        avgObjSize = int(collStats['avgObjSize'])
+        rowsPerChunk = int(chunkGbTarget * 1024 * 1024 * 1024 / avgObjSize)
+        size = collStats['size']
+        storageSize = collStats['storageSize']
 
-    # get things started - segmenters
-
-    # get things started - dataLoaders
-
-
-    # wait for all children threads and processes to be gone
+        targetColl.update_one({'_id':thisCollection['_id']},
+                              {'$set':{'status':'INSPECTED',
+                                       'numDocuments':numDocuments,
+                                       'avgObjSize':avgObjSize,
+                                       'rowsPerChunk':rowsPerChunk,
+                                       'size':size,
+                                       'storageSize':storageSize}})
         
-    client.close()
+    sourceClient.close()
+    targetClient.close()
 
 
 def segmenter(appConfig):
@@ -133,12 +170,13 @@ def main():
 
     parser.add_argument('--source-uri',required=True,type=str,help='Source URI')
     parser.add_argument('--target-uri',required=True,type=str,help='Target URI')
-    parser.add_argument('--source-namespace',required=True,type=str,help='Source Namespace as <database>.<collection>')
-    parser.add_argument('--target-namespace',required=False,type=str,help='Target Namespace as <database>.<collection>, defaults to --source-namespace')
     parser.add_argument('--verbose',required=False,action='store_true',help='Enable verbose logging')
     parser.add_argument('--num-full-load-workers',required=False,default=10,type=int,help='Number of workers performing full load')
     parser.add_argument('--chunk-gb-target',required=False,default=1,type=int,help='Target/maximum GB for each full load chunk')
+    parser.add_argument('--mm3k-database',required=False,type=str,default='mm3k-state',help='Source URI')
                         
+    #parser.add_argument('--source-namespace',required=True,type=str,help='Source Namespace as <database>.<collection>')
+    #parser.add_argument('--target-namespace',required=False,type=str,help='Target Namespace as <database>.<collection>, defaults to --source-namespace')
     #parser.add_argument('--feedback-seconds',required=False,type=int,default=60,help='Number of seconds between feedback output')
     #parser.add_argument('--max-inserts-per-batch',required=False,type=int,default=100,help='Maximum number of inserts to include in a single batch')
     #parser.add_argument('--dry-run',required=False,action='store_true',help='Read source changes only, do not apply to target')
@@ -157,14 +195,15 @@ def main():
     appConfig = {}
     appConfig['sourceUri'] = args.source_uri
     appConfig['targetUri'] = args.target_uri
-    appConfig['sourceNs'] = args.source_namespace
-    if not args.target_namespace:
-        appConfig['targetNs'] = args.source_namespace
-    else:
-        appConfig['targetNs'] = args.target_namespace
+    #appConfig['sourceNs'] = args.source_namespace
+    #if not args.target_namespace:
+    #    appConfig['targetNs'] = args.source_namespace
+    #else:
+    #    appConfig['targetNs'] = args.target_namespace
     appConfig['verboseLogging'] = args.verbose
     appConfig['numFullLoadWorkers'] = int(args.num_full_load_workers)
     appConfig['chunkGbTarget'] = int(args.chunk_gb_target)
+    appConfig['mm3kDatabase'] = args.mm3k_database
 
     #appConfig['maxInsertsPerBatch'] = args.max_inserts_per_batch
     #appConfig['feedbackSeconds'] = args.feedback_seconds
@@ -186,7 +225,7 @@ def main():
 
     #appConfig['numDocumentsToMigrate'] = getCollectionCount(appConfig)
     
-    logIt(-1,"full load using {} workers".format(appConfig['numFullLoadWorkers']))
+    #logIt(-1,"full load using {} workers".format(appConfig['numFullLoadWorkers']))
 
     mp.set_start_method('spawn')
     q = mp.Manager().Queue()
@@ -197,8 +236,11 @@ def main():
     tCatalogger = threading.Thread(target=catalogger,args=(appConfig,))
     tCatalogger.start()
 
-    tSegmenter = threading.Thread(target=segmenter,args=(appConfig,))
-    tSegmenter.start()
+    tInspector = threading.Thread(target=inspector,args=(appConfig,))
+    tInspector.start()
+
+    #tSegmenter = threading.Thread(target=segmenter,args=(appConfig,))
+    #tSegmenter.start()
 
 
     #t = threading.Thread(target=reporter,args=(appConfig,q))
@@ -215,7 +257,8 @@ def main():
     #for process in processList:
     #    process.join()
         
-    tSegmenter.join()
+    #tSegmenter.join()
+    tInspector.join()
     tCatalogger.join()
     tCoordinator.join()
 
