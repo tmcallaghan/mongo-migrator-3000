@@ -19,18 +19,62 @@ def logIt(threadnum, message):
     print("[{}] thread {:>3d} | {}".format(logTimeStamp,threadnum,message))
 
 
-'''
-def getCollectionCount(appConfig):
+def coordinator(appConfig):
+    # mm3k's project manager
+    warnings.filterwarnings("ignore","You appear to be connected to a DocumentDB cluster.")
+
+    # check if there is a work in progress
+    targetClient = pymongo.MongoClient(host=appConfig['targetUri'],appname='mm3k')
+
+    # does the database already exist
+    
+    # if so we must be resuming, not starting
+
+    # get things started - cataloggers
+
+    # get things started - segmenters
+
+    # get things started - dataLoaders
+
+
+    # wait for all children threads and processes to be gone
+        
+    client.close()
+
+
+def catalogger(appConfig):
+    # catalog the effort - namespaces and their document count, average document size, size on disk
     warnings.filterwarnings("ignore","You appear to be connected to a DocumentDB cluster.")
 
     sourceDb = appConfig["sourceNs"].split('.',1)[0]
     sourceColl = appConfig["sourceNs"].split('.',1)[1]
-    client = pymongo.MongoClient(appConfig['sourceUri'])
+    client = pymongo.MongoClient(host=appConfig['sourceUri'])
     db = client[sourceDb]
-    collStats = db.command("collStats", sourceColl)
+    col = db[sourceColl]
+
+    chunkGbTarget = appConfig['chunkGbTarget']
+
+    collStats = db.command("collStats",sourceColl)
+    numDocuments = collStats['count']
+    avgObjSize = int(collStats['avgObjSize'])
+
+    rowsPerChunk = int(chunkGbTarget * 1024 * 1024 * 1024 / avgObjSize)
+
+
+    # does the database already exist
+    
+    # if so we must be resuming, not starting
+
+    # get things started - cataloggers
+
+    # get things started - segmenters
+
+    # get things started - dataLoaders
+
+
+    # wait for all children threads and processes to be gone
+        
     client.close()
-    return max(collStats['count'],1)
-'''
 
 
 def segmenter(appConfig):
@@ -81,33 +125,6 @@ def segmenter(appConfig):
         logIt(0,"boundary {:3d} - {} {} | done in approximately {} seconds".format(numBoundaries,type(currentId["_id"]),currentId["_id"],estimatedSecsToDone))
         #boundaryList.append(currentId["_id"])
 
-
-    '''
-    for x in range(numBoundaries):
-        currentId = col.find_one(filter={"_id":{"$gt":currentId["_id"]}},projection={"_id":True},sort=[("_id",pymongo.ASCENDING)],skip=feedbackDocuments)
-        numDocsTotal += feedbackDocuments
-        pctDone = numDocsTotal/(numDocuments - feedbackDocuments)*100
-        elapsedSecs = int(time.time() - queryStartTime)
-        estimatedSecsToDone = int(((100/pctDone)*elapsedSecs)-elapsedSecs)
-        print("  boundary {:3d} - {} {} | done in approximately {} seconds".format(x+1,type(currentId["_id"]),currentId["_id"],estimatedSecsToDone))
-        boundaryList.append(currentId["_id"])
-
-    boundaryListAsString = "{}".format(",".join('"{}"'.format(i) for i in boundaryList))
-    print("")
-    print("boundaries as list | {}".format(boundaryListAsString))
-
-    boundaryListAsStringForDms = "[{}]".format("],[".join('"{}"'.format(i) for i in boundaryList))
-    print("")
-    print("boundaries as list for DMS | {}".format(boundaryListAsStringForDms))
-
-    print("")
-
-    queryElapsedSecs = int(time.time() - queryStartTime)
-    print('query required {} seconds'.format(queryElapsedSecs))
-
-    print("")
-    '''
-        
     client.close()
 
 
@@ -173,10 +190,16 @@ def main():
 
     mp.set_start_method('spawn')
     q = mp.Manager().Queue()
-    #tController = threading.Thread(target=segmenter,args=(appConfig,q))
 
-    tController = threading.Thread(target=segmenter,args=(appConfig,))
-    tController.start()
+    tCoordinator = threading.Thread(target=coordinator,args=(appConfig,))
+    tCoordinator.start()
+
+    tCatalogger = threading.Thread(target=catalogger,args=(appConfig,))
+    tCatalogger.start()
+
+    tSegmenter = threading.Thread(target=segmenter,args=(appConfig,))
+    tSegmenter.start()
+
 
     #t = threading.Thread(target=reporter,args=(appConfig,q))
     #t.start()
@@ -192,7 +215,9 @@ def main():
     #for process in processList:
     #    process.join()
         
-    tController.join()
+    tSegmenter.join()
+    tCatalogger.join()
+    tCoordinator.join()
 
 
 if __name__ == "__main__":
