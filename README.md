@@ -3,6 +3,10 @@ Start to finish data migration for MongoDB API compatible databases
 
 # the goal
 Easy, performant, and correct data migrations between document databases
+- no long running queries
+- fully resumable
+- highly observable
+- zero configuration required
 
 # the plan
 prep
