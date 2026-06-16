@@ -4,7 +4,7 @@ Start to finish data migration for MongoDB API compatible databases
 # the goal
 Easy, performant, and correct data migrations between document databases
 - no long running queries
-- fully resumable
+- fully resumable (via graceful stop or crash)
 - highly observable
 - zero configuration required
 
@@ -54,16 +54,3 @@ questions
 - Q: support transactions?
 - Q: support DDL?
 
-DL schema/algorithm
-- capture all participating collections (namespaces) [collectionsMigrating]
-	- db, coll, doc count, size, storageSize, avg doc (as reported), avg doc (sampled)
-	- decide if parallel or not - check min/max _id, min size
-		- if not, single document into collectionChunks, sets parallel:false, status:"ReadyForFullLoad"
-- for each namespace going parallel [collectionChunks]
-	- chunker grabs document from collectionsMigrating, sets parallel:true, status:"Chunking"
-	- creates one document per chunk into collectionChunks
-		- db, coll, startTime, endTime, minId, maxId, actualDocuments
-- for each document in collectionChunks
-	- set status:"FullLoad", set startTime
-	- insert from minId to maxId (or no minId/maxId if not set)
-		- small collections, mixed _id types
