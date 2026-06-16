@@ -7,6 +7,7 @@ Easy, performant, and correct data migrations between document databases
 - fully resumable (via graceful stop or crash)
 - highly observable
 - zero configuration required
+- source data load from multiple read-replicas/secondaries
 
 # the plan
 prep
