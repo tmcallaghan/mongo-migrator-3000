@@ -126,7 +126,7 @@ def inspector(appConfig):
     logName = 'INSPECTOR'
     logId = 1
 
-    chunkGbTarget = appConfig['chunkGbTarget']
+    chunkBytesTarget = appConfig['chunkBytesTarget']
 
     sourceClient = pymongo.MongoClient(host=appConfig['sourceUri'])
 
@@ -158,7 +158,7 @@ def inspector(appConfig):
         collStats = db.command("collStats",thisCollection['collection'])
         numDocuments = collStats['count']
         avgObjSize = int(collStats['avgObjSize'])
-        rowsPerChunk = int(chunkGbTarget * 1024 * 1024 * 1024 / avgObjSize)
+        rowsPerChunk = int(chunkBytesTarget / avgObjSize)
         size = collStats['size']
         storageSize = collStats['storageSize']
 
@@ -415,7 +415,7 @@ def main():
     parser.add_argument('--target-uri',required=True,type=str,help='Target URI')
     parser.add_argument('--verbose',required=False,action='store_true',help='Enable verbose logging')
     parser.add_argument('--num-full-load-workers',required=False,default=10,type=int,help='Number of workers performing full load')
-    parser.add_argument('--chunk-gb-target',required=False,default=1,type=int,help='Target/maximum GB for each full load chunk')
+    parser.add_argument('--chunk-gb-target',required=False,default=1.0,type=float,help='Target/maximum size for each full load chunk in gigabytes')
     parser.add_argument('--mm3k-database',required=False,type=str,default='mm3k-state',help='Source URI')
 
     parser.add_argument('--num-segmenters',required=False,type=int,default=10,help='Maximum number of concurrent segmenters')
@@ -449,6 +449,7 @@ def main():
     appConfig['verboseLogging'] = args.verbose
     appConfig['numFullLoadWorkers'] = int(args.num_full_load_workers)
     appConfig['chunkGbTarget'] = int(args.chunk_gb_target)
+    appConfig['chunkBytesTarget'] = int(args.chunk_gb_target * (1024 ** 3))
     appConfig['mm3kDatabase'] = args.mm3k_database
     appConfig['numSegmenters'] = args.num_segmenters
     appConfig['numLoaders'] = args.num_loaders
