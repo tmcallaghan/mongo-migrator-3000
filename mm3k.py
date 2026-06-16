@@ -51,30 +51,39 @@ def coordinator(appConfig):
 
     priorIntervalTime = time.time()
     priorMigratedDocuments = 0
+    priorMigratedBytes = 0
 
     while not allDone:
         time.sleep(10)
         result = statusColl.find_one({'_id':1})
         migratedDocuments = result['migratedDocuments']
         totalDocuments = result['totalDocuments']
+        migratedBytes = result['migratedBytes']
+        totalBytes = result['totalBytes']
         migratedSegments = result['migratedSegments']
         totalSegments = result['totalSegments']
         startTime = result['startTime']
 
         totElapsedSeconds = int(time.time() - startTime.timestamp())
         totDocumentsPerSecond = int(migratedDocuments / totElapsedSeconds)
+        totBytesPerSecond = int(migratedBytes / totElapsedSeconds)
+        totGigabitsPerSecond = totBytesPerSecond * 8 / (1024 ** 3)
 
         intElapsedSeconds = int(time.time() - priorIntervalTime)
         intDocuments = migratedDocuments - priorMigratedDocuments
+        intBytes = migratedBytes - priorMigratedBytes
         if intElapsedSeconds == 0:
             intDocumentsPerSecond = 0
+            intGigabitsPerSecond = 0
         else:
             intDocumentsPerSecond = int(intDocuments / intElapsedSeconds)
+            intGigabitsPerSecond = intBytes * 8 / (1024 ** 3)
 
-        logIt(logName,logId,"tot docs = {:,d} | tot migrated {:,d} docs at {:,d} ips | int migrated {:,d} docs at {:,d} ips | segments {:,d} of {:,d}".format(totalDocuments,migratedDocuments,totDocumentsPerSecond,intDocuments,intDocumentsPerSecond,migratedSegments,totalSegments))
+        logIt(logName,logId,"tot docs = {:,d} | tot migrated {:,d} docs at {:,d} ips | int migrated {:,d} docs at {:,d} ips | segments {:,d} of {:,d} | tot Gbps {:.2f} | int Gbps {:.2f}".format(totalDocuments,migratedDocuments,totDocumentsPerSecond,intDocuments,intDocumentsPerSecond,migratedSegments,totalSegments,totGigabitsPerSecond,intGigabitsPerSecond))
 
         priorIntervalTime = time.time()
         priorMigratedDocuments = migratedDocuments
+        priorMigratedBytes = migratedBytes
         
     targetClient.close()
 
