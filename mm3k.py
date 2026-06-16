@@ -134,7 +134,8 @@ def inspector(appConfig):
         thisCollection = targetColl.find_one_and_update({'status':'CATALOGGED'},{'$set':{'status':'INSPECTING'}})
         if thisCollection == None:
             # wait and try again
-            logIt(logName,logId,'no work found # {}'.format(numNoDocuments))
+            if appConfig['verboseLogging']:
+                logIt(logName,logId,'no work found # {}'.format(numNoDocuments))
             numNoDocuments += 1
             if numNoDocuments >= 6:
                 allDone = True
@@ -190,7 +191,8 @@ def segmenter(appConfig,threadNum):
         startTime = time.time()
         if thisCollection == None:
             # wait and try again
-            logIt(logName,logId,'no work found # {}'.format(numNoDocuments))
+            if appConfig['verboseLogging']:
+                logIt(logName,logId,'no work found # {}'.format(numNoDocuments))
             numNoDocuments += 1
             if numNoDocuments >= 5:
                 allDone = True
@@ -268,6 +270,7 @@ def segmentCollection(appConfig,thisCollection,sourceClient,targetDb,threadNum):
                 # multiple segment collection
                 result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':numBoundaries+1,'minId':priorId['_id'],'maxId':maxId['_id'],'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(endTime,tz=dt.timezone.utc),'segmentSeconds':numSeconds,'status':'SEGMENTED'})
 
+            result = statusColl.update_one({'_id':1},{'$inc':{'totalSegments':1}})
             allDone = True
             continue
         else:
@@ -300,6 +303,8 @@ def loader(processNum, appConfig):
     targetCollSegments = targetDb['segments']
     statusColl = targetDb['status']
 
+    dryRun = appConfig['dryRun']
+
     sourceClient = pymongo.MongoClient(host=appConfig['sourceUri'])
 
     allDone = False
@@ -311,7 +316,8 @@ def loader(processNum, appConfig):
         startTime = time.time()
         if thisSegment == None:
             # wait and try again
-            logIt(logName,logId,'no work found # {}'.format(numNoDocuments))
+            if appConfig['verboseLogging']:
+                logIt(logName,logId,'no work found # {}'.format(numNoDocuments))
             numNoDocuments += 1
             if numNoDocuments >= 6:
                 allDone = True
@@ -322,7 +328,7 @@ def loader(processNum, appConfig):
         logIt(logName,logId,'loading segment {} of {}.{}'.format(thisSegment['segment'],thisSegment['database'],thisSegment['collection']))
 
         # we have a segment to load
-        numDocumentsLoaded,numBytesLoaded = loadSegment(appConfig,thisSegment,sourceClient,targetClient,processNum)
+        numDocumentsLoaded,numBytesLoaded = loadSegment(appConfig,thisSegment,sourceClient,targetClient,processNum,dryRun)
         endTime = time.time()
 
         targetCollSegments.update_one({'_id':thisSegment['_id']},
@@ -339,7 +345,7 @@ def loader(processNum, appConfig):
     targetClient.close()
 
 
-def loadSegment(appConfig,thisSegment,sourceClient,targetClient,processNum):
+def loadSegment(appConfig,thisSegment,sourceClient,targetClient,processNum,dryRun):
     # load a single segment
     warnings.filterwarnings("ignore","You appear to be connected to a DocumentDB cluster.")
 
@@ -377,13 +383,15 @@ def loadSegment(appConfig,thisSegment,sourceClient,targetClient,processNum):
         bulkOpList.append(pymongo.InsertOne(doc))
 
         if (numCurrentBulkOps >= appConfig["maxInsertsPerBatch"]):
-            result = targetColl.bulk_write(bulkOpList,ordered=False)
+            if not dryRun:
+                result = targetColl.bulk_write(bulkOpList,ordered=False)
             bulkOpList = []
             numCurrentBulkOps = 0
             numTotalBatches += 1
 
     if (numCurrentBulkOps > 0):
-        result = targetColl.bulk_write(bulkOpList,ordered=False)
+        if not dryRun:
+            result = targetColl.bulk_write(bulkOpList,ordered=False)
         bulkOpList = []
         numCurrentBulkOps = 0
         numTotalBatches += 1
@@ -408,7 +416,7 @@ def main():
     #parser.add_argument('--target-namespace',required=False,type=str,help='Target Namespace as <database>.<collection>, defaults to --source-namespace')
     #parser.add_argument('--feedback-seconds',required=False,type=int,default=60,help='Number of seconds between feedback output')
     parser.add_argument('--max-inserts-per-batch',required=False,type=int,default=100,help='Maximum number of inserts to include in a single batch')
-    #parser.add_argument('--dry-run',required=False,action='store_true',help='Read source changes only, do not apply to target')
+    parser.add_argument('--dry-run',required=False,action='store_true',help='Read only, do not apply to target (except --mm3k-database')
     #parser.add_argument('--create-cloudwatch-metrics',required=False,action='store_true',help='Create CloudWatch metrics')
     #parser.add_argument('--cluster-name',required=False,type=str,help='Name of cluster for CloudWatch metrics')
 
@@ -437,9 +445,7 @@ def main():
     appConfig['numLoaders'] = args.num_loaders
     appConfig['maxInsertsPerBatch'] = args.max_inserts_per_batch
     #appConfig['feedbackSeconds'] = args.feedback_seconds
-    #appConfig['dryRun'] = args.dry_run
-    #appConfig['boundaryFieldName'] = args.boundary_field_name
-    #appConfig['boundaryDatatype'] = args.boundary_datatype
+    appConfig['dryRun'] = args.dry_run
     #appConfig['createCloudwatchMetrics'] = args.create_cloudwatch_metrics
     #appConfig['clusterName'] = args.cluster_name
 
