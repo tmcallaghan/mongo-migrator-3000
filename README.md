@@ -11,14 +11,14 @@ Easy, performant, and correct data migrations between document databases
 # the plan
 prep
 - [ ] assess source
-- [ ] persist collection information
+- [x] persist collection information
 - [ ] support single collection, single database, everything
 - [ ] exception by namespace
 
 data load (DL)
 - [ ] must support resume, use replace() for resuming chunks
-- [ ] collection chunker(s), persist work into queue collection - hi/low
-- [ ] drive FL from chunks
+- [x] collection chunker(s), persist work into queue collection - hi/low
+- [x] drive FL from chunks
 - [ ] dynamically increase/decrease concurrency and throughput
 
 change data capture (CDC)
