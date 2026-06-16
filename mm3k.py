@@ -32,22 +32,12 @@ def coordinator(appConfig):
     targetClient = pymongo.MongoClient(host=appConfig['targetUri'],appname='mm3k')
     targetDb = targetClient[appConfig['mm3kDatabase']]
     statusColl = targetDb['status']
+    processColl = targetDb['process']
 
     startTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
 
     statusColl.insert_one({'_id':1,'status':'RUNNING','totalCollections':0,'totalDocuments':0,'totalBytes':0,'totalSegments':0,'migratedCollections':0,'migratedDocuments':0,'migratedBytes':0,'migratedSegments':0,'startTime':startTime})
-
-    # does the database already exist
-    
-    # if so we must be resuming, not starting
-
-    # get things started - cataloggers
-
-    # get things started - segmenters
-
-    # get things started - dataLoaders
-
-    # wait for all children threads and processes to be gone
+    processColl.insert_one({'type':logName,'id':logId,'status':'RUNNING','startTime':startTime})
 
     priorIntervalTime = time.time()
     priorMigratedDocuments = 0
@@ -55,6 +45,12 @@ def coordinator(appConfig):
 
     while not allDone:
         time.sleep(10)
+
+        runningProcesses = processColl.count_documents({'$and':[{'type':{'$ne':'COORDINATOR'}},{'status':{'$ne':'COMPLETED'}}]})
+        if runningProcesses == 0:
+            allDone = True
+            continue
+
         result = statusColl.find_one({'_id':1})
         migratedDocuments = result['migratedDocuments']
         totalDocuments = result['totalDocuments']
@@ -79,12 +75,28 @@ def coordinator(appConfig):
             intDocumentsPerSecond = int(intDocuments / intElapsedSeconds)
             intGigabitsPerSecond = intBytes * 8 / (1024 ** 3)
 
-        logIt(logName,logId,"tot docs = {:,d} | tot migrated {:,d} docs at {:,d} ips | int migrated {:,d} docs at {:,d} ips | segments {:,d} of {:,d} | tot Gbps {:.2f} | int Gbps {:.2f}".format(totalDocuments,migratedDocuments,totDocumentsPerSecond,intDocuments,intDocumentsPerSecond,migratedSegments,totalSegments,totGigabitsPerSecond,intGigabitsPerSecond))
+        logIt(logName,logId,"tot docs = {:,d} | tot migrated {:,d} docs at {:,d} ips | int migrated {:,d} docs at {:,d} ips | segments {:,d} of {:,d} | tot Gbps {:.2f} | int Gbps {:.2f} | procs {:,d}".format(totalDocuments,migratedDocuments,totDocumentsPerSecond,intDocuments,intDocumentsPerSecond,migratedSegments,totalSegments,totGigabitsPerSecond,intGigabitsPerSecond,runningProcesses))
 
         priorIntervalTime = time.time()
         priorMigratedDocuments = migratedDocuments
         priorMigratedBytes = migratedBytes
         
+    endTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
+    processColl.update_one({'type':logName,'id':logId},{'$set':{'status':'COMPLETED','endTime':endTime}})
+
+    result = statusColl.find_one({'_id':1})
+    migratedDocuments = result['migratedDocuments']
+    migratedBytes = result['migratedBytes']
+    startTime = result['startTime']
+
+    totElapsedSeconds = int(time.time() - startTime.timestamp())
+    totDocumentsPerSecond = int(migratedDocuments / totElapsedSeconds)
+    totBytesPerSecond = int(migratedBytes / totElapsedSeconds)
+    totGigabitsPerSecond = totBytesPerSecond * 8 / (1024 ** 3)
+    totTerabytesPerHour = totBytesPerSecond * 3600 / 1e12
+
+    logIt(logName,logId,"migration complete | {:,d} seconds | {:,d} docs | {:,d} ips | {:.2f} TB/hr".format(totElapsedSeconds,migratedDocuments,totDocumentsPerSecond,totTerabytesPerHour)) 
+
     targetClient.close()
 
 
@@ -100,13 +112,19 @@ def catalogger(appConfig):
     targetDb = targetClient[appConfig['mm3kDatabase']]
     targetColl = targetDb['collections']
     statusColl = targetDb['status']
+    processColl = targetDb['process']
+
+    startTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
+    processColl.insert_one({'type':logName,'id':logId,'status':'RUNNING','startTime':startTime})
 
     dbDict = sourceClient.admin.command("listDatabases",nameOnly=True,filter={"name":{"$nin":['admin','config','local','system']}})['databases']
     for thisDb in dbDict:
+        '''
         if thisDb['name'] == 'dms4':
             # //tmc skipping for now
             logIt(logName,logId,"*** SKIPPING database {}".format(thisDb['name']))
             continue
+        '''
 
         logIt(logName,logId,"catalogging database {}".format(thisDb['name']))
         collCursor = sourceClient[thisDb['name']].list_collections()
@@ -114,6 +132,9 @@ def catalogger(appConfig):
             #print(thisColl)
             result = targetColl.insert_one({'database':thisDb['name'],'collection':thisColl['name'],'status':'CATALOGGED'})
             result = statusColl.update_one({'_id':1},{'$inc':{'totalCollections':1}})
+
+    endTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
+    processColl.update_one({'type':logName,'id':logId},{'$set':{'status':'COMPLETED','endTime':endTime}})
 
     sourceClient.close()
     targetClient.close()
@@ -134,6 +155,10 @@ def inspector(appConfig):
     targetDb = targetClient[appConfig['mm3kDatabase']]
     targetColl = targetDb['collections']
     statusColl = targetDb['status']
+    processColl = targetDb['process']
+
+    startTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
+    processColl.insert_one({'type':logName,'id':logId,'status':'RUNNING','startTime':startTime})
 
     allDone = False
     numNoDocuments = 0
@@ -171,6 +196,9 @@ def inspector(appConfig):
                                        'storageSize':storageSize}})
 
         statusColl.update_one({'_id':1},{'$inc':{'totalDocuments':numDocuments,'totalBytes':size}})
+
+    endTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
+    processColl.update_one({'type':logName,'id':logId},{'$set':{'status':'COMPLETED','endTime':endTime}})
         
     sourceClient.close()
     targetClient.close()
@@ -190,6 +218,10 @@ def segmenter(appConfig,threadNum):
     targetColl = targetDb['collections']
     targetCollSegments = targetDb['segments']
     statusColl = targetDb['status']
+    processColl = targetDb['process']
+
+    startTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
+    processColl.insert_one({'type':logName,'id':logId,'status':'RUNNING','startTime':startTime})
 
     allDone = False
     numNoDocuments = 0
@@ -222,6 +254,8 @@ def segmenter(appConfig,threadNum):
                                        'segmentEndTime':dt.datetime.fromtimestamp(endTime,tz=dt.timezone.utc),
                                        'segmentSeconds':endTime-startTime}})
 
+    endTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
+    processColl.update_one({'type':logName,'id':logId},{'$set':{'status':'COMPLETED','endTime':endTime}})
         
     sourceClient.close()
     targetClient.close()
@@ -311,6 +345,10 @@ def loader(processNum, appConfig):
     targetColl = targetDb['collections']
     targetCollSegments = targetDb['segments']
     statusColl = targetDb['status']
+    processColl = targetDb['process']
+
+    startTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
+    processColl.insert_one({'type':logName,'id':logId,'status':'RUNNING','startTime':startTime})
 
     dryRun = appConfig['dryRun']
 
@@ -349,6 +387,9 @@ def loader(processNum, appConfig):
                                        'loadSeconds':endTime-startTime}})
 
         statusColl.update_one({'_id':1},{'$inc':{'migratedDocuments':numDocumentsLoaded,'migratedBytes':numBytesLoaded,'migratedSegments':1}})
+
+    endTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
+    processColl.update_one({'type':logName,'id':logId},{'$set':{'status':'COMPLETED','endTime':endTime}})
 
     sourceClient.close()
     targetClient.close()
