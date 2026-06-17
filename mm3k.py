@@ -33,6 +33,7 @@ def coordinator(appConfig):
     targetDb = targetClient[appConfig['mm3kDatabase']]
     statusColl = targetDb['status']
     processColl = targetDb['process']
+    segmentsColl = targetDb['segments']
 
     feedbackSeconds = appConfig['feedbackSeconds']
 
@@ -99,6 +100,18 @@ def coordinator(appConfig):
 
     logIt(logName,logId,"migration complete | {:,d} seconds | {:,d} docs | {:,d} ips | {:.2f} TB/hr".format(totElapsedSeconds,migratedDocuments,totDocumentsPerSecond,totTerabytesPerHour)) 
 
+    # average ips by collection
+    result = segmentsColl.aggregate([{'$group':{'_id':{'database':'$database','collection':'$collection'},
+                                                'avgObjSize':{'$avg':'$avgObjSize'},
+                                                'numSegments':{'$sum':1},
+                                                'numDocuments':{'$sum':'$loadDocuments'},
+                                                'numSeconds':{'$sum':'$loadSeconds'}}},
+                                     {'$project':{'averageIps':{'$divide':['$numDocuments','$numSeconds']},'numSegments':1,'numDocuments':1,'numSeconds':1,'avgObjSize':1}},
+                                     {'$sort':{'_id':1}}])
+
+    for thisResult in result:
+        logIt(logName,logId,"collection performance | {:,d} tot seconds | {:,d} docs | {:,d} segments | {:,d} ips | {:,d} avgObjSize".format(int(thisResult['numSeconds']),int(thisResult['numDocuments']),int(thisResult['numSegments']),int(thisResult['averageIps']),int(thisResult['avgObjSize'])))
+
     targetClient.close()
 
 
@@ -123,6 +136,7 @@ def catalogger(appConfig):
     for thisDb in dbDict:
         '''
         if thisDb['name'] == 'dms4':
+        if thisDb['name'] != 'ycsb':
             # //tmc skipping for now
             logIt(logName,logId,"*** SKIPPING database {}".format(thisDb['name']))
             continue
@@ -310,17 +324,17 @@ def segmentCollection(appConfig,thisCollection,sourceClient,targetDb,threadNum):
             # create final segment
             if numBoundaries == 0:
                 # single segment collection
-                result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':1,'minId':minId['_id'],'maxId':maxId['_id'],'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(endTime,tz=dt.timezone.utc),'segmentSeconds':numSeconds,'status':'SEGMENTED'})
+                result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':1,'minId':minId['_id'],'maxId':maxId['_id'],'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(endTime,tz=dt.timezone.utc),'segmentSeconds':numSeconds,'status':'SEGMENTED','avgObjSize':avgObjSize})
             else:
                 # multiple segment collection
-                result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':numBoundaries+1,'minId':priorId['_id'],'maxId':maxId['_id'],'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(endTime,tz=dt.timezone.utc),'segmentSeconds':numSeconds,'status':'SEGMENTED'})
+                result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':numBoundaries+1,'minId':priorId['_id'],'maxId':maxId['_id'],'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(endTime,tz=dt.timezone.utc),'segmentSeconds':numSeconds,'status':'SEGMENTED','avgObjSize':avgObjSize})
 
             result = statusColl.update_one({'_id':1},{'$inc':{'totalSegments':1}})
             allDone = True
             continue
         else:
             # create segment
-            result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':numBoundaries+1,'minId':priorId['_id'],'maxId':currentId['_id'],'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(endTime,tz=dt.timezone.utc),'segmentSeconds':numSeconds,'status':'SEGMENTED'})
+            result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':numBoundaries+1,'minId':priorId['_id'],'maxId':currentId['_id'],'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(endTime,tz=dt.timezone.utc),'segmentSeconds':numSeconds,'status':'SEGMENTED','avgObjSize':avgObjSize})
             result = statusColl.update_one({'_id':1},{'$inc':{'totalSegments':1}})
 
         priorId = currentId
@@ -374,7 +388,7 @@ def loader(processNum, appConfig):
                 time.sleep(5)
             continue
 
-        logIt(logName,logId,'loading segment {} of {}.{}'.format(thisSegment['segment'],thisSegment['database'],thisSegment['collection']))
+        logIt(logName,logId,'started loading segment {} of {}.{}'.format(thisSegment['segment'],thisSegment['database'],thisSegment['collection']))
 
         # we have a segment to load
         numDocumentsLoaded,numBytesLoaded = loadSegment(appConfig,thisSegment,sourceClient,targetClient,processNum,dryRun)
@@ -389,6 +403,8 @@ def loader(processNum, appConfig):
                                        'loadSeconds':endTime-startTime}})
 
         statusColl.update_one({'_id':1},{'$inc':{'migratedDocuments':numDocumentsLoaded,'migratedBytes':numBytesLoaded,'migratedSegments':1}})
+
+        logIt(logName,logId,'finished loading segment {} of {}.{}'.format(thisSegment['segment'],thisSegment['database'],thisSegment['collection']))
 
     endTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
     processColl.update_one({'type':logName,'id':logId},{'$set':{'status':'COMPLETED','endTime':endTime}})
