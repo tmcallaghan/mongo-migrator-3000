@@ -34,6 +34,8 @@ def coordinator(appConfig):
     statusColl = targetDb['status']
     processColl = targetDb['process']
 
+    feedbackSeconds = appConfig['feedbackSeconds']
+
     startTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
 
     statusColl.insert_one({'_id':1,'status':'RUNNING','totalCollections':0,'totalDocuments':0,'totalBytes':0,'totalSegments':0,'migratedCollections':0,'migratedDocuments':0,'migratedBytes':0,'migratedSegments':0,'startTime':startTime})
@@ -44,7 +46,7 @@ def coordinator(appConfig):
     priorMigratedBytes = 0
 
     while not allDone:
-        time.sleep(10)
+        time.sleep(feedbackSeconds)
 
         runningProcesses = processColl.count_documents({'$and':[{'type':{'$ne':'COORDINATOR'}},{'status':{'$ne':'COMPLETED'}}]})
         if runningProcesses == 0:
@@ -464,8 +466,8 @@ def main():
                         
     #parser.add_argument('--source-namespace',required=True,type=str,help='Source Namespace as <database>.<collection>')
     #parser.add_argument('--target-namespace',required=False,type=str,help='Target Namespace as <database>.<collection>, defaults to --source-namespace')
-    #parser.add_argument('--feedback-seconds',required=False,type=int,default=60,help='Number of seconds between feedback output')
-    parser.add_argument('--max-inserts-per-batch',required=False,type=int,default=100,help='Maximum number of inserts to include in a single batch')
+    parser.add_argument('--feedback-seconds',required=False,type=int,default=60,help='Number of seconds between feedback output')
+    parser.add_argument('--max-inserts-per-batch',required=False,type=int,default=200,help='Maximum number of inserts to include in a single batch')
     parser.add_argument('--dry-run',required=False,action='store_true',help='Read only, do not apply to target (except --mm3k-database')
     #parser.add_argument('--create-cloudwatch-metrics',required=False,action='store_true',help='Create CloudWatch metrics')
     #parser.add_argument('--cluster-name',required=False,type=str,help='Name of cluster for CloudWatch metrics')
@@ -495,7 +497,7 @@ def main():
     appConfig['numSegmenters'] = args.num_segmenters
     appConfig['numLoaders'] = args.num_loaders
     appConfig['maxInsertsPerBatch'] = args.max_inserts_per_batch
-    #appConfig['feedbackSeconds'] = args.feedback_seconds
+    appConfig['feedbackSeconds'] = args.feedback_seconds
     appConfig['dryRun'] = args.dry_run
     #appConfig['createCloudwatchMetrics'] = args.create_cloudwatch_metrics
     #appConfig['clusterName'] = args.cluster_name
