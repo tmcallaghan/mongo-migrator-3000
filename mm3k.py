@@ -12,11 +12,17 @@ import argparse
 import boto3
 import warnings
 from bson import encode
+import math
 
 
-def logIt(logName, logId, message):
+def logIt(logName, logId, message, appConfig):
     logTimeStamp = dt.datetime.now(dt.timezone.utc).isoformat()[:-3] + 'Z'
-    print("[{}] {:>20} | {:>3d} | {}".format(logTimeStamp,logName,logId,message))
+    durationSeconds = int(time.time() - appConfig['startTime'])
+    d, durationSeconds = divmod(durationSeconds, 86400)
+    h, durationSeconds = divmod(durationSeconds, 3600)
+    m, s = divmod(durationSeconds, 60)
+    durationString = f"{d:03d}:{h:02d}:{m:02d}:{s:02d}"
+    print("{} | {} | {:>20} | {:>3d} | {}".format(logTimeStamp,durationString,logName,logId,message))
 
 
 def coordinator(appConfig):
@@ -78,7 +84,7 @@ def coordinator(appConfig):
             intDocumentsPerSecond = int(intDocuments / intElapsedSeconds)
             intGigabitsPerSecond = intBytes * 8 / (1024 ** 3)
 
-        logIt(logName,logId,"tot docs = {:,d} | tot migrated {:,d} docs at {:,d} ips | int migrated {:,d} docs at {:,d} ips | segments {:,d} of {:,d} | tot Gbps {:.2f} | int Gbps {:.2f} | procs {:,d}".format(totalDocuments,migratedDocuments,totDocumentsPerSecond,intDocuments,intDocumentsPerSecond,migratedSegments,totalSegments,totGigabitsPerSecond,intGigabitsPerSecond,runningProcesses))
+        logIt(logName,logId,"tot docs = {:,d} | tot migrated {:,d} docs at {:,d} ips | int migrated {:,d} docs at {:,d} ips | segments {:,d} of {:,d} | tot Gbps {:.2f} | int Gbps {:.2f} | procs {:,d}".format(totalDocuments,migratedDocuments,totDocumentsPerSecond,intDocuments,intDocumentsPerSecond,migratedSegments,totalSegments,totGigabitsPerSecond,intGigabitsPerSecond,runningProcesses),appConfig)
 
         priorIntervalTime = time.time()
         priorMigratedDocuments = migratedDocuments
@@ -98,19 +104,21 @@ def coordinator(appConfig):
     totGigabitsPerSecond = totBytesPerSecond * 8 / (1024 ** 3)
     totTerabytesPerHour = totBytesPerSecond * 3600 / 1e12
 
-    logIt(logName,logId,"migration complete | {:,d} seconds | {:,d} docs | {:,d} ips | {:.2f} TB/hr".format(totElapsedSeconds,migratedDocuments,totDocumentsPerSecond,totTerabytesPerHour)) 
+    logIt(logName,logId,"migration complete | {:,d} seconds | {:,d} docs | {:,d} ips | {:.2f} TB/hr".format(totElapsedSeconds,migratedDocuments,totDocumentsPerSecond,totTerabytesPerHour),appConfig) 
 
-    # average ips by collection
+    # load performance by collection
     result = segmentsColl.aggregate([{'$group':{'_id':{'database':'$database','collection':'$collection'},
                                                 'avgObjSize':{'$avg':'$avgObjSize'},
                                                 'numSegments':{'$sum':1},
                                                 'numDocuments':{'$sum':'$loadDocuments'},
+                                                'numBytes':{'$sum':'$loadBytes'},
                                                 'numSeconds':{'$sum':'$loadSeconds'}}},
-                                     {'$project':{'averageIps':{'$divide':['$numDocuments','$numSeconds']},'numSegments':1,'numDocuments':1,'numSeconds':1,'avgObjSize':1}},
+                                     {'$project':{'averageIps':{'$divide':['$numDocuments','$numSeconds']},'numSegments':1,'numDocuments':1,'numSeconds':1,'avgObjSize':1,'numBytes':1}},
                                      {'$sort':{'_id':1}}])
 
     for thisResult in result:
-        logIt(logName,logId,"collection performance | {:,d} tot seconds | {:,d} docs | {:,d} segments | {:,d} ips | {:,d} avgObjSize".format(int(thisResult['numSeconds']),int(thisResult['numDocuments']),int(thisResult['numSegments']),int(thisResult['averageIps']),int(thisResult['avgObjSize'])))
+        thisGb = thisResult['numBytes'] / (1024 ** 3)
+        logIt(logName,logId,"collection perf | {}.{} | {:,.2f} GB | {:,d} tot seconds | {:,d} docs | {:,d} segments | {:,d} ips | {:,d} avgObjSize".format(thisResult['_id']['database'],thisResult['_id']['collection'],thisGb,int(thisResult['numSeconds']),int(thisResult['numDocuments']),int(thisResult['numSegments']),int(thisResult['averageIps']),int(thisResult['avgObjSize'])),appConfig)
 
     targetClient.close()
 
@@ -134,15 +142,13 @@ def catalogger(appConfig):
 
     dbDict = sourceClient.admin.command("listDatabases",nameOnly=True,filter={"name":{"$nin":['admin','config','local','system']}})['databases']
     for thisDb in dbDict:
-        '''
-        if thisDb['name'] == 'dms4':
-        if thisDb['name'] != 'ycsb':
-            # //tmc skipping for now
-            logIt(logName,logId,"*** SKIPPING database {}".format(thisDb['name']))
-            continue
-        '''
+        #if thisDb['name'] == 'dms':
+        #if thisDb['name'] != 'ycsb':
+        #    # //tmc skipping for now
+        #    logIt(logName,logId,"*** SKIPPING database {}".format(thisDb['name']),appConfig)
+        #    continue
 
-        logIt(logName,logId,"catalogging database {}".format(thisDb['name']))
+        logIt(logName,logId,"catalogging database {}".format(thisDb['name']),appConfig)
         collCursor = sourceClient[thisDb['name']].list_collections()
         for thisColl in collCursor:
             #print(thisColl)
@@ -185,14 +191,14 @@ def inspector(appConfig):
         if thisCollection == None:
             # wait and try again
             if appConfig['verboseLogging']:
-                logIt(logName,logId,'no work found # {}'.format(numNoDocuments))
+                logIt(logName,logId,'no work found # {}'.format(numNoDocuments),appConfig)
             numNoDocuments += 1
             if numNoDocuments >= 6:
                 allDone = True
             else:
                 time.sleep(5)
             continue
-        logIt(logName,logId,'inspecting {}.{}'.format(thisCollection['database'],thisCollection['collection']))
+        logIt(logName,logId,'inspecting {}.{}'.format(thisCollection['database'],thisCollection['collection']),appConfig)
         numNoDocuments = 0
 
         db = sourceClient[thisCollection['database']]
@@ -249,14 +255,14 @@ def segmenter(appConfig,threadNum):
         if thisCollection == None:
             # wait and try again
             if appConfig['verboseLogging']:
-                logIt(logName,logId,'no work found # {}'.format(numNoDocuments))
+                logIt(logName,logId,'no work found # {}'.format(numNoDocuments),appConfig)
             numNoDocuments += 1
             if numNoDocuments >= 5:
                 allDone = True
             else:
                 time.sleep(6)
             continue
-        logIt(logName,logId,'segmenting {}.{}'.format(thisCollection['database'],thisCollection['collection']))
+        logIt(logName,logId,'segmenting {}.{}'.format(thisCollection['database'],thisCollection['collection']),appConfig)
         numNoDocuments = 0
 
         # we have a collection to segment
@@ -297,8 +303,8 @@ def segmentCollection(appConfig,thisCollection,sourceClient,targetDb,threadNum):
     avgObjSize = thisCollection['avgObjSize']
     rowsPerChunk = thisCollection['rowsPerChunk']
 
-    logIt(logName,logId,"collection {}.{} contains {} documents".format(sourceDb,sourceColl,numDocuments))
-    logIt(logName,logId,"calculated {} documents for a {} GB chunk of {} average object (bytes)".format(rowsPerChunk,chunkGbTarget,avgObjSize))
+    logIt(logName,logId,"collection {}.{} contains {} documents".format(sourceDb,sourceColl,numDocuments),appConfig)
+    logIt(logName,logId,"calculated {} documents for a {} GB chunk of {} average object (bytes)".format(rowsPerChunk,chunkGbTarget,avgObjSize),appConfig)
 
     allDone = False
 
@@ -343,7 +349,7 @@ def segmentCollection(appConfig,thisCollection,sourceClient,targetDb,threadNum):
         elapsedSecs = int(time.time() - queryStartTime)
         estimatedSecsToDone = max(0,int(((100/pctDone)*elapsedSecs)-elapsedSecs))
         numBoundaries += 1
-        logIt(logName,logId,"ns {}.{} | boundary {:3d} - {} {} | done in approximately {} seconds".format(sourceDb,sourceColl,numBoundaries,type(currentId["_id"]),currentId["_id"],estimatedSecsToDone))
+        logIt(logName,logId,"ns {}.{} | boundary {:3d} - {} {} | done in approximately {} seconds".format(sourceDb,sourceColl,numBoundaries,type(currentId["_id"]),currentId["_id"],estimatedSecsToDone),appConfig)
         #boundaryList.append(currentId["_id"])
 
     return numBoundaries+1
@@ -380,7 +386,7 @@ def loader(processNum, appConfig):
         if thisSegment == None:
             # wait and try again
             if appConfig['verboseLogging']:
-                logIt(logName,logId,'no work found # {}'.format(numNoDocuments))
+                logIt(logName,logId,'no work found # {}'.format(numNoDocuments),appConfig)
             numNoDocuments += 1
             if numNoDocuments >= 6:
                 allDone = True
@@ -388,7 +394,7 @@ def loader(processNum, appConfig):
                 time.sleep(5)
             continue
 
-        logIt(logName,logId,'started loading segment {} of {}.{}'.format(thisSegment['segment'],thisSegment['database'],thisSegment['collection']))
+        logIt(logName,logId,'started loading segment {} of {}.{}'.format(thisSegment['segment'],thisSegment['database'],thisSegment['collection']),appConfig)
 
         # we have a segment to load
         numDocumentsLoaded,numBytesLoaded = loadSegment(appConfig,thisSegment,sourceClient,targetClient,processNum,dryRun)
@@ -404,7 +410,7 @@ def loader(processNum, appConfig):
 
         statusColl.update_one({'_id':1},{'$inc':{'migratedDocuments':numDocumentsLoaded,'migratedBytes':numBytesLoaded,'migratedSegments':1}})
 
-        logIt(logName,logId,'finished loading segment {} of {}.{}'.format(thisSegment['segment'],thisSegment['database'],thisSegment['collection']))
+        logIt(logName,logId,'finished loading segment {} of {}.{}'.format(thisSegment['segment'],thisSegment['database'],thisSegment['collection']),appConfig)
 
     endTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
     processColl.update_one({'type':logName,'id':logId},{'$set':{'status':'COMPLETED','endTime':endTime}})
@@ -426,8 +432,14 @@ def loadSegment(appConfig,thisSegment,sourceClient,targetClient,processNum,dryRu
     targetDb = targetClient[thisSegment['database']]
     targetColl = targetDb[thisSegment['collection']]
 
+    loadMetricsColl = targetClient[appConfig['mm3kDatabase']]['loadMetrics']
+    #loadMetricsColl = targetDb['loadMetrics']
+
+    loadMetricInterval = appConfig['loadMetricInterval']
+    loadMetricFeedback = appConfig['loadMetricFeedback']
+
     startTime = time.time()
-    lastFeedback = time.time()
+    nextPerfReportTime = startTime + loadMetricFeedback
 
     bulkOpList = []
 
@@ -435,6 +447,9 @@ def loadSegment(appConfig,thisSegment,sourceClient,targetClient,processNum,dryRu
     numTotalBytes = 0
     numTotalBatches = 0
     numTotalInserts = 0
+    numIntervalBatches = 0
+    numIntervalInserts = 0
+    numIntervalBytes = 0
 
     boundaryFieldName = '_id'
 
@@ -446,7 +461,10 @@ def loadSegment(appConfig,thisSegment,sourceClient,targetClient,processNum,dryRu
 
     for doc in cursor:
         numTotalInserts += 1
-        numTotalBytes += len(encode(doc))
+        numIntervalInserts += 1
+        numDocBytes = len(encode(doc))
+        numTotalBytes += numDocBytes
+        numIntervalBytes += numDocBytes
         numCurrentBulkOps += 1
         bulkOpList.append(pymongo.InsertOne(doc))
 
@@ -456,6 +474,20 @@ def loadSegment(appConfig,thisSegment,sourceClient,targetClient,processNum,dryRu
             bulkOpList = []
             numCurrentBulkOps = 0
             numTotalBatches += 1
+            numIntervalBatches += 1
+
+        if time.time() > nextPerfReportTime:
+            nextPerfReportTime = time.time() + loadMetricFeedback
+            # find next "second" boundary
+            dtSecondBoundary = dt.datetime.fromtimestamp(math.ceil(time.time() / loadMetricInterval) * loadMetricInterval,tz=dt.timezone.utc)
+            try:
+                result = loadMetricsColl.update_one({"_id":dtSecondBoundary},{"$setOnInsert":{"seconds":loadMetricInterval},"$inc":{"batches":numIntervalBatches,"inserts":numIntervalInserts,"bytes":numIntervalBytes}},upsert=True)
+            except pymongo.errors.DuplicateKeyError:
+                result = loadMetricsColl.update_one({"_id":dtSecondBoundary},{"$setOnInsert":{"seconds":loadMetricInterval},"$inc":{"batches":numIntervalBatches,"inserts":numIntervalInserts,"bytes":numIntervalBytes}},upsert=True)
+
+            numIntervalBatches = 0
+            numIntervalInserts = 0
+            numIntervalBytes = 0
 
     if (numCurrentBulkOps > 0):
         if not dryRun:
@@ -463,6 +495,13 @@ def loadSegment(appConfig,thisSegment,sourceClient,targetClient,processNum,dryRu
         bulkOpList = []
         numCurrentBulkOps = 0
         numTotalBatches += 1
+
+    # log final load metrics
+    dtSecondBoundary = dt.datetime.fromtimestamp(math.ceil(time.time() / loadMetricInterval) * loadMetricInterval,tz=dt.timezone.utc)
+    try:
+        result = loadMetricsColl.update_one({"_id":dtSecondBoundary},{"$setOnInsert":{"seconds":loadMetricInterval},"$inc":{"batches":numIntervalBatches,"inserts":numIntervalInserts,"bytes":numIntervalBytes}},upsert=True)
+    except:
+        result = loadMetricsColl.update_one({"_id":dtSecondBoundary},{"$setOnInsert":{"seconds":loadMetricInterval},"$inc":{"batches":numIntervalBatches,"inserts":numIntervalInserts,"bytes":numIntervalBytes}},upsert=True)
 
     return numTotalInserts, numTotalBytes
 
@@ -517,6 +556,13 @@ def main():
     appConfig['dryRun'] = args.dry_run
     #appConfig['createCloudwatchMetrics'] = args.create_cloudwatch_metrics
     #appConfig['clusterName'] = args.cluster_name
+    
+    # collect load metrics at this number of seconds of granularity
+    appConfig['loadMetricInterval'] = 10
+    # segment loaders report to the current interval every this many seconds
+    appConfig['loadMetricFeedback'] = 4
+    # start time
+    appConfig['startTime'] = time.time()
 
     mp.set_start_method('spawn')
     #q = mp.Manager().Queue()
