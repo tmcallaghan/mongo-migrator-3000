@@ -142,8 +142,7 @@ def catalogger(appConfig):
 
     dbDict = sourceClient.admin.command("listDatabases",nameOnly=True,filter={"name":{"$nin":['admin','config','local','system']}})['databases']
     for thisDb in dbDict:
-        #if thisDb['name'] == 'dms':
-        #if thisDb['name'] != 'ycsb':
+        #if thisDb['name'] != 'dms':
         #    # //tmc skipping for now
         #    logIt(logName,logId,"*** SKIPPING database {}".format(thisDb['name']),appConfig)
         #    continue
