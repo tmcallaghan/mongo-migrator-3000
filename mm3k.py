@@ -178,6 +178,9 @@ def inspector(appConfig):
     statusColl = targetDb['status']
     processColl = targetDb['process']
 
+    numWorkCheckAttempts = appConfig['numWorkCheckAttempts']
+    numWorkCheckSecondsBetween = appConfig['numWorkCheckSecondsBetween']
+
     startTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
     processColl.insert_one({'type':logName,'id':logId,'status':'RUNNING','startTime':startTime})
 
@@ -192,10 +195,10 @@ def inspector(appConfig):
             if appConfig['verboseLogging']:
                 logIt(logName,logId,'no work found # {}'.format(numNoDocuments),appConfig)
             numNoDocuments += 1
-            if numNoDocuments >= 6:
+            if numNoDocuments >= numWorkCheckAttempts:
                 allDone = True
             else:
-                time.sleep(5)
+                time.sleep(numWorkCheckSecondsBetween)
             continue
         logIt(logName,logId,'inspecting {}.{}'.format(thisCollection['database'],thisCollection['collection']),appConfig)
         numNoDocuments = 0
@@ -241,6 +244,9 @@ def segmenter(appConfig,threadNum):
     statusColl = targetDb['status']
     processColl = targetDb['process']
 
+    numWorkCheckAttempts = appConfig['numWorkCheckAttempts']
+    numWorkCheckSecondsBetween = appConfig['numWorkCheckSecondsBetween']
+
     startTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
     processColl.insert_one({'type':logName,'id':logId,'status':'RUNNING','startTime':startTime})
 
@@ -256,10 +262,10 @@ def segmenter(appConfig,threadNum):
             if appConfig['verboseLogging']:
                 logIt(logName,logId,'no work found # {}'.format(numNoDocuments),appConfig)
             numNoDocuments += 1
-            if numNoDocuments >= 5:
+            if numNoDocuments >= numWorkCheckAttempts:
                 allDone = True
             else:
-                time.sleep(6)
+                time.sleep(numWorkCheckSecondsBetween)
             continue
         logIt(logName,logId,'segmenting {}.{}'.format(thisCollection['database'],thisCollection['collection']),appConfig)
         numNoDocuments = 0
@@ -368,6 +374,9 @@ def loader(processNum, appConfig):
     statusColl = targetDb['status']
     processColl = targetDb['process']
 
+    numWorkCheckAttempts = appConfig['numWorkCheckAttempts']
+    numWorkCheckSecondsBetween = appConfig['numWorkCheckSecondsBetween']
+
     startTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
     processColl.insert_one({'type':logName,'id':logId,'status':'RUNNING','startTime':startTime})
 
@@ -387,10 +396,10 @@ def loader(processNum, appConfig):
             if appConfig['verboseLogging']:
                 logIt(logName,logId,'no work found # {}'.format(numNoDocuments),appConfig)
             numNoDocuments += 1
-            if numNoDocuments >= 6:
+            if numNoDocuments >= numWorkCheckAttempts:
                 allDone = True
             else:
-                time.sleep(5)
+                time.sleep(numWorkCheckSecondsBetween)
             continue
 
         logIt(logName,logId,'started loading segment {} of {}.{}'.format(thisSegment['segment'],thisSegment['database'],thisSegment['collection']),appConfig)
@@ -556,12 +565,16 @@ def main():
     #appConfig['createCloudwatchMetrics'] = args.create_cloudwatch_metrics
     #appConfig['clusterName'] = args.cluster_name
     
-    # collect load metrics at this number of seconds of granularity
+    # collect load metrics reported at this number of seconds of granularity
     appConfig['loadMetricInterval'] = 10
     # segment loaders report to the current interval every this many seconds
     appConfig['loadMetricFeedback'] = 4
     # start time
     appConfig['startTime'] = time.time()
+    # number of attempts to find work for any mm3k process
+    appConfig['numWorkCheckAttempts'] = 30
+    # number of seconds between work available checks
+    appConfig['numWorkCheckSecondsBetween'] = 6
 
     mp.set_start_method('spawn')
     #q = mp.Manager().Queue()
