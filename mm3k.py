@@ -142,10 +142,9 @@ def catalogger(appConfig):
 
     dbDict = sourceClient.admin.command("listDatabases",nameOnly=True,filter={"name":{"$nin":['admin','config','local','system']}})['databases']
     for thisDb in dbDict:
-        #if thisDb['name'] != 'dms':
-        #    # //tmc skipping for now
-        #    logIt(logName,logId,"*** SKIPPING database {}".format(thisDb['name']),appConfig)
-        #    continue
+        if thisDb['name'] in [appConfig['mm3kDatabase']]:
+            logIt(logName,logId,"*** SKIPPING database {}".format(thisDb['name']),appConfig)
+            continue
 
         logIt(logName,logId,"catalogging database {}".format(thisDb['name']),appConfig)
         collCursor = sourceClient[thisDb['name']].list_collections()
@@ -271,7 +270,10 @@ def segmenter(appConfig,threadNum):
         numNoDocuments = 0
 
         # we have a collection to segment
-        numSegments = segmentCollection(appConfig,thisCollection,sourceClient,targetDb,threadNum)
+        if appConfig['mathSegments']:
+            numSegments = segmentCollectionUsingMaths(appConfig,thisCollection,sourceClient,targetDb,threadNum)
+        else:
+            numSegments = segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,threadNum)
         endTime = time.time()
 
         targetColl.update_one({'_id':thisCollection['_id']},
@@ -288,7 +290,7 @@ def segmenter(appConfig,threadNum):
     targetClient.close()
 
 
-def segmentCollection(appConfig,thisCollection,sourceClient,targetDb,threadNum):
+def segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,threadNum):
     # get boundaries by performing server-side skips
     warnings.filterwarnings("ignore","You appear to be connected to a DocumentDB cluster.")
 
@@ -310,12 +312,13 @@ def segmentCollection(appConfig,thisCollection,sourceClient,targetDb,threadNum):
 
     logIt(logName,logId,"collection {}.{} contains {} documents".format(sourceDb,sourceColl,numDocuments),appConfig)
     logIt(logName,logId,"calculated {} documents for a {} GB chunk of {} average object (bytes)".format(rowsPerChunk,chunkGbTarget,avgObjSize),appConfig)
+    logIt(logName,logId,"segmenting {}.{} via skips".format(sourceDb,sourceColl),appConfig)
 
     allDone = False
 
     queryStartTime = time.time()
 
-    # get the first _id
+    # get the first and last _id
     minId = col.find_one(filter=None,projection={"_id":True},sort=[("_id",pymongo.ASCENDING)])
     maxId = col.find_one(filter=None,projection={"_id":True},sort=[("_id",pymongo.DESCENDING)])
     currentId = minId
@@ -358,6 +361,65 @@ def segmentCollection(appConfig,thisCollection,sourceClient,targetDb,threadNum):
         #boundaryList.append(currentId["_id"])
 
     return numBoundaries+1
+
+
+def segmentCollectionUsingMaths(appConfig,thisCollection,sourceClient,targetDb,threadNum):
+    # get boundaries by mathematically chunking the keyspace
+    warnings.filterwarnings("ignore","You appear to be connected to a DocumentDB cluster.")
+
+    logName = 'SEGMENT-COLLECTION'
+    logId = threadNum
+
+    sourceDb = thisCollection['database']
+    sourceColl = thisCollection['collection']
+
+    col = sourceClient[sourceDb][sourceColl]
+    targetColl = targetDb['segments']
+    statusColl = targetDb['status']
+
+    chunkGbTarget = appConfig['chunkGbTarget']
+
+    numDocuments = thisCollection['numDocuments']
+    avgObjSize = thisCollection['avgObjSize']
+    rowsPerChunk = thisCollection['rowsPerChunk']
+    size = thisCollection['size']
+    numCalculatedSegments = int(size / (chunkGbTarget * (1024 ** 3)))+1
+
+    logIt(logName,logId,"collection {}.{} contains {} documents".format(sourceDb,sourceColl,numDocuments),appConfig)
+    logIt(logName,logId,"calculated {} documents for a {} GB chunk of {} average object (bytes)".format(rowsPerChunk,chunkGbTarget,avgObjSize),appConfig)
+    logIt(logName,logId,"segmenting {}.{} mathematically into {} segments".format(sourceDb,sourceColl,numCalculatedSegments),appConfig)
+    logIt(logName,logId,"segmenting {}.{} mathematically".format(sourceDb,sourceColl),appConfig)
+
+    allDone = False
+
+    queryStartTime = time.time()
+
+    # get the first and last _id
+    minId = col.find_one(filter=None,projection={"_id":True},sort=[("_id",pymongo.ASCENDING)])
+    maxId = col.find_one(filter=None,projection={"_id":True},sort=[("_id",pymongo.DESCENDING)])
+
+    startTime = time.time()
+
+    if numCalculatedSegments == 1:
+        result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':1,'minId':minId['_id'],'maxId':maxId['_id'],'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentSeconds':0,'status':'SEGMENTED','avgObjSize':avgObjSize})
+    else:
+        # calculate the segments
+        intMinId = int(str(minId['_id']),16)
+        intMaxId = int(str(maxId['_id']),16)
+        idDiff = int(intMaxId - intMinId)
+        idDiffInc = int(idDiff / numCalculatedSegments)
+        intPriorId = intMinId
+        for loop in range(numCalculatedSegments):
+            result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':loop+1,'minId':ObjectId(hex(intPriorId)[2:].zfill(24)),'maxId':ObjectId(hex(intPriorId+idDiffInc)[2:].zfill(24)),'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentSeconds':0,'status':'SEGMENTED','avgObjSize':avgObjSize})
+            intPriorId += idDiffInc
+        if intPriorId < intMaxId:
+            # create final segment
+            numCalculatedSegments += 1
+            result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':numCalculatedSegments,'minId':ObjectId(hex(intPriorId)[2:].zfill(24)),'maxId':maxId['_id'],'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentSeconds':0,'status':'SEGMENTED','avgObjSize':avgObjSize})
+
+    result = statusColl.update_one({'_id':1},{'$inc':{'totalSegments':numCalculatedSegments}})
+
+    return numCalculatedSegments
 
 
 def loader(processNum, appConfig):
@@ -531,9 +593,11 @@ def main():
     #parser.add_argument('--target-namespace',required=False,type=str,help='Target Namespace as <database>.<collection>, defaults to --source-namespace')
     parser.add_argument('--feedback-seconds',required=False,type=int,default=60,help='Number of seconds between feedback output')
     parser.add_argument('--max-inserts-per-batch',required=False,type=int,default=200,help='Maximum number of inserts to include in a single batch')
-    parser.add_argument('--dry-run',required=False,action='store_true',help='Read only, do not apply to target (except --mm3k-database')
+    parser.add_argument('--dry-run',required=False,action='store_true',help='Read only, do not apply to target (except --mm3k-database)')
     #parser.add_argument('--create-cloudwatch-metrics',required=False,action='store_true',help='Create CloudWatch metrics')
     #parser.add_argument('--cluster-name',required=False,type=str,help='Name of cluster for CloudWatch metrics')
+
+    parser.add_argument('--math-segments',required=False,action='store_true',help='Calculate segments using math, not queries')
 
     args = parser.parse_args()
 
@@ -562,6 +626,7 @@ def main():
     appConfig['maxInsertsPerBatch'] = args.max_inserts_per_batch
     appConfig['feedbackSeconds'] = args.feedback_seconds
     appConfig['dryRun'] = args.dry_run
+    appConfig['mathSegments'] = args.math_segments
     #appConfig['createCloudwatchMetrics'] = args.create_cloudwatch_metrics
     #appConfig['clusterName'] = args.cluster_name
     
@@ -572,7 +637,7 @@ def main():
     # start time
     appConfig['startTime'] = time.time()
     # number of attempts to find work for any mm3k process
-    appConfig['numWorkCheckAttempts'] = 30
+    appConfig['numWorkCheckAttempts'] = 12
     # number of seconds between work available checks
     appConfig['numWorkCheckSecondsBetween'] = 6
 
