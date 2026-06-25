@@ -25,7 +25,7 @@ def logIt(logName, logId, message, appConfig):
     print("{} | {} | {:>20} | {:>3d} | {}".format(logTimeStamp,durationString,logName,logId,message))
 
 
-def coordinator(appConfig):
+def coordinator(appConfig,sourceClient,targetClient):
     # mm3k's project manager
     warnings.filterwarnings("ignore","You appear to be connected to a DocumentDB cluster.")
 
@@ -35,7 +35,6 @@ def coordinator(appConfig):
     allDone = False
 
     # check if there is a work in progress
-    targetClient = pymongo.MongoClient(host=appConfig['targetUri'],appname='mm3k')
     targetDb = targetClient[appConfig['mm3kDatabase']]
     statusColl = targetDb['status']
     processColl = targetDb['process']
@@ -120,18 +119,14 @@ def coordinator(appConfig):
         thisGb = thisResult['numBytes'] / (1024 ** 3)
         logIt(logName,logId,"collection perf | {}.{} | {:,.2f} GB | {:,d} tot seconds | {:,d} docs | {:,d} segments | {:,d} ips | {:,d} avgObjSize".format(thisResult['_id']['database'],thisResult['_id']['collection'],thisGb,int(thisResult['numSeconds']),int(thisResult['numDocuments']),int(thisResult['numSegments']),int(thisResult['averageIps']),int(thisResult['avgObjSize'])),appConfig)
 
-    targetClient.close()
 
-
-def catalogger(appConfig):
+def catalogger(appConfig,sourceClient,targetClient):
     # catalog the effort - just namespaces
     warnings.filterwarnings("ignore","You appear to be connected to a DocumentDB cluster.")
 
     logName = 'CATALOGGER'
     logId = 1
 
-    sourceClient = pymongo.MongoClient(host=appConfig['sourceUri'])
-    targetClient = pymongo.MongoClient(host=appConfig['targetUri'])
     targetDb = targetClient[appConfig['mm3kDatabase']]
     targetColl = targetDb['collections']
     statusColl = targetDb['status']
@@ -143,6 +138,10 @@ def catalogger(appConfig):
     dbDict = sourceClient.admin.command("listDatabases",nameOnly=True,filter={"name":{"$nin":['admin','config','local','system']}})['databases']
     for thisDb in dbDict:
         if thisDb['name'] in [appConfig['mm3kDatabase']]:
+            logIt(logName,logId,"*** SKIPPING mm3k state database {}".format(thisDb['name']),appConfig)
+            continue
+
+        if thisDb['name'] not in ['dmschart']:
             logIt(logName,logId,"*** SKIPPING database {}".format(thisDb['name']),appConfig)
             continue
 
@@ -156,11 +155,8 @@ def catalogger(appConfig):
     endTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
     processColl.update_one({'type':logName,'id':logId},{'$set':{'status':'COMPLETED','endTime':endTime}})
 
-    sourceClient.close()
-    targetClient.close()
 
-
-def inspector(appConfig):
+def inspector(appConfig,sourceClient,targetClient):
     # catalog the effort - namespaces and their document count, average document size, size on disk
     warnings.filterwarnings("ignore","You appear to be connected to a DocumentDB cluster.")
 
@@ -169,9 +165,6 @@ def inspector(appConfig):
 
     chunkBytesTarget = appConfig['chunkBytesTarget']
 
-    sourceClient = pymongo.MongoClient(host=appConfig['sourceUri'])
-
-    targetClient = pymongo.MongoClient(host=appConfig['targetUri'])
     targetDb = targetClient[appConfig['mm3kDatabase']]
     targetColl = targetDb['collections']
     statusColl = targetDb['status']
@@ -214,7 +207,6 @@ def inspector(appConfig):
         # get min _id, max _id, and _id data types
         idFirst = col.aggregate([{"$sort":{"_id":pymongo.ASCENDING}},{"$project":{"_id":True,"idType":{"$type":"$_id"}}},{"$limit":1}]).next()
         idLast = col.aggregate([{"$sort":{"_id":pymongo.DESCENDING}},{"$project":{"_id":True,"idType":{"$type":"$_id"}}},{"$limit":1}]).next()
-        #logIt(logName,logId,"ns = {}.{} | idFirst = {} | idLast = {}".format(thisCollection['database'],thisCollection['collection'],idFirst,idLast),appConfig)
 
         targetColl.update_one({'_id':thisCollection['_id']},
                               {'$set':{'status':'INSPECTED',
@@ -232,21 +224,15 @@ def inspector(appConfig):
 
     endTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
     processColl.update_one({'type':logName,'id':logId},{'$set':{'status':'COMPLETED','endTime':endTime}})
-        
-    sourceClient.close()
-    targetClient.close()
 
 
-def segmenter(appConfig,threadNum):
+def segmenter(appConfig,threadNum,sourceClient,targetClient):
     # catalog the effort - namespaces and their document count, average document size, size on disk
     warnings.filterwarnings("ignore","You appear to be connected to a DocumentDB cluster.")
 
     logName = 'SEGMENTER'
     logId = threadNum 
 
-    sourceClient = pymongo.MongoClient(host=appConfig['sourceUri'])
-
-    targetClient = pymongo.MongoClient(host=appConfig['targetUri'])
     targetDb = targetClient[appConfig['mm3kDatabase']]
     targetColl = targetDb['collections']
     targetCollSegments = targetDb['segments']
@@ -300,9 +286,6 @@ def segmenter(appConfig,threadNum):
     endTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
     processColl.update_one({'type':logName,'id':logId},{'$set':{'status':'COMPLETED','endTime':endTime}})
         
-    sourceClient.close()
-    targetClient.close()
-
 
 def segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,threadNum):
     # get boundaries by performing server-side skips
@@ -441,6 +424,7 @@ def loader(processNum, appConfig):
     logName = 'LOADER'
     logId = processNum
 
+    sourceClient = pymongo.MongoClient(host=appConfig['sourceUri'])
     targetClient = pymongo.MongoClient(host=appConfig['targetUri'])
     targetDb = targetClient[appConfig['mm3kDatabase']]
     targetColl = targetDb['collections']
@@ -455,8 +439,6 @@ def loader(processNum, appConfig):
     processColl.insert_one({'type':logName,'id':logId,'status':'RUNNING','startTime':startTime})
 
     dryRun = appConfig['dryRun']
-
-    sourceClient = pymongo.MongoClient(host=appConfig['sourceUri'])
 
     allDone = False
     numNoDocuments = 0
@@ -653,21 +635,24 @@ def main():
     # number of seconds between work available checks
     appConfig['numWorkCheckSecondsBetween'] = 6
 
+    sourceClient = pymongo.MongoClient(host=appConfig['sourceUri'])
+    targetClient = pymongo.MongoClient(host=appConfig['targetUri'])
+
     mp.set_start_method('spawn')
     #q = mp.Manager().Queue()
 
-    tCoordinator = threading.Thread(target=coordinator,args=(appConfig,))
+    tCoordinator = threading.Thread(target=coordinator,args=(appConfig,sourceClient,targetClient,))
     tCoordinator.start()
 
-    tCatalogger = threading.Thread(target=catalogger,args=(appConfig,))
+    tCatalogger = threading.Thread(target=catalogger,args=(appConfig,sourceClient,targetClient,))
     tCatalogger.start()
 
-    tInspector = threading.Thread(target=inspector,args=(appConfig,))
+    tInspector = threading.Thread(target=inspector,args=(appConfig,sourceClient,targetClient,))
     tInspector.start()
 
     segmenterList = []
     for loop in range(appConfig['numSegmenters']):
-        tSegmenter = threading.Thread(target=segmenter,args=(appConfig,loop,))
+        tSegmenter = threading.Thread(target=segmenter,args=(appConfig,loop,sourceClient,targetClient))
         tSegmenter.start()
         segmenterList.append(tSegmenter)
 
@@ -685,6 +670,9 @@ def main():
     tInspector.join()
     tCatalogger.join()
     tCoordinator.join()
+
+    sourceClient.close()
+    targetClient.close()
 
 
 if __name__ == "__main__":
