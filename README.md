@@ -8,10 +8,11 @@ Easy, performant, and correct data migrations between document databases
 - highly observable
 - zero configuration required
 - source data load from multiple read-replicas/secondaries
+- stateful in the target
 
 # the plan
 prep
-- [ ] assess source
+- [x] assess source
 - [x] persist collection information
 - [ ] support single collection, single database, everything
 - [ ] exception by namespace
