@@ -15,14 +15,16 @@ from bson import encode
 import math
 
 
-def logIt(logName, logId, message, appConfig):
-    logTimeStamp = dt.datetime.now(dt.timezone.utc).isoformat()[:-3] + 'Z'
+def logIt(logName, logId, message, appConfig, targetClient):
+    logTimeStamp = dt.datetime.now(dt.timezone.utc)
+    logTimeStampString = logTimeStamp.isoformat()[:-3] + 'Z'
     durationSeconds = int(time.time() - appConfig['startTime'])
     d, durationSeconds = divmod(durationSeconds, 86400)
     h, durationSeconds = divmod(durationSeconds, 3600)
     m, s = divmod(durationSeconds, 60)
     durationString = f"{d:03d}:{h:02d}:{m:02d}:{s:02d}"
-    print("{} | {} | {:>20} | {:>3d} | {}".format(logTimeStamp,durationString,logName,logId,message))
+    print("{} | {} | {:>20} | {:>3d} | {}".format(logTimeStampString,durationString,logName,logId,message))
+    targetClient[appConfig['mm3kDatabase']]['log'].insert_one({'processName':logName,'processId':logId,'message':message,'logTime':logTimeStamp})
 
 
 def coordinator(appConfig,sourceClient,targetClient):
@@ -83,7 +85,7 @@ def coordinator(appConfig,sourceClient,targetClient):
             intDocumentsPerSecond = int(intDocuments / intElapsedSeconds)
             intGigabitsPerSecond = intBytes * 8 / (1024 ** 3)
 
-        logIt(logName,logId,"tot docs = {:,d} | tot migrated {:,d} docs at {:,d} ips | int migrated {:,d} docs at {:,d} ips | segments {:,d} of {:,d} | tot Gbps {:.2f} | int Gbps {:.2f} | procs {:,d}".format(totalDocuments,migratedDocuments,totDocumentsPerSecond,intDocuments,intDocumentsPerSecond,migratedSegments,totalSegments,totGigabitsPerSecond,intGigabitsPerSecond,runningProcesses),appConfig)
+        logIt(logName,logId,"tot docs = {:,d} | tot migrated {:,d} docs at {:,d} ips | int migrated {:,d} docs at {:,d} ips | segments {:,d} of {:,d} | tot Gbps {:.2f} | int Gbps {:.2f} | procs {:,d}".format(totalDocuments,migratedDocuments,totDocumentsPerSecond,intDocuments,intDocumentsPerSecond,migratedSegments,totalSegments,totGigabitsPerSecond,intGigabitsPerSecond,runningProcesses),appConfig,targetClient)
 
         priorIntervalTime = time.time()
         priorMigratedDocuments = migratedDocuments
@@ -103,7 +105,7 @@ def coordinator(appConfig,sourceClient,targetClient):
     totGigabitsPerSecond = totBytesPerSecond * 8 / (1024 ** 3)
     totTerabytesPerHour = totBytesPerSecond * 3600 / 1e12
 
-    logIt(logName,logId,"migration complete | {:,d} seconds | {:,d} docs | {:,d} ips | {:.2f} TB/hr".format(totElapsedSeconds,migratedDocuments,totDocumentsPerSecond,totTerabytesPerHour),appConfig) 
+    logIt(logName,logId,"migration complete | {:,d} seconds | {:,d} docs | {:,d} ips | {:.2f} TB/hr".format(totElapsedSeconds,migratedDocuments,totDocumentsPerSecond,totTerabytesPerHour),appConfig,targetClient) 
 
     # load performance by collection
     result = segmentsColl.aggregate([{'$group':{'_id':{'database':'$database','collection':'$collection'},
@@ -117,7 +119,7 @@ def coordinator(appConfig,sourceClient,targetClient):
 
     for thisResult in result:
         thisGb = thisResult['numBytes'] / (1024 ** 3)
-        logIt(logName,logId,"collection perf | {}.{} | {:,.2f} GB | {:,d} tot seconds | {:,d} docs | {:,d} segments | {:,d} ips | {:,d} avgObjSize".format(thisResult['_id']['database'],thisResult['_id']['collection'],thisGb,int(thisResult['numSeconds']),int(thisResult['numDocuments']),int(thisResult['numSegments']),int(thisResult['averageIps']),int(thisResult['avgObjSize'])),appConfig)
+        logIt(logName,logId,"collection perf | {}.{} | {:,.2f} GB | {:,d} tot seconds | {:,d} docs | {:,d} segments | {:,d} ips | {:,d} avgObjSize".format(thisResult['_id']['database'],thisResult['_id']['collection'],thisGb,int(thisResult['numSeconds']),int(thisResult['numDocuments']),int(thisResult['numSegments']),int(thisResult['averageIps']),int(thisResult['avgObjSize'])),appConfig,targetClient)
 
 
 def catalogger(appConfig,sourceClient,targetClient):
@@ -138,14 +140,14 @@ def catalogger(appConfig,sourceClient,targetClient):
     dbDict = sourceClient.admin.command("listDatabases",nameOnly=True,filter={"name":{"$nin":['admin','config','local','system']}})['databases']
     for thisDb in dbDict:
         if thisDb['name'] in [appConfig['mm3kDatabase']]:
-            logIt(logName,logId,"*** SKIPPING mm3k state database {}".format(thisDb['name']),appConfig)
+            logIt(logName,logId,"*** SKIPPING mm3k state database {}".format(thisDb['name']),appConfig,targetClient)
             continue
 
-        if thisDb['name'] not in ['dmschart']:
-            logIt(logName,logId,"*** SKIPPING database {}".format(thisDb['name']),appConfig)
-            continue
+        #if thisDb['name'] not in ['dmschart']:
+        #    logIt(logName,logId,"*** SKIPPING database {}".format(thisDb['name']),appConfig,targetClient)
+        #    continue
 
-        logIt(logName,logId,"catalogging database {}".format(thisDb['name']),appConfig)
+        logIt(logName,logId,"catalogging database {}".format(thisDb['name']),appConfig,targetClient)
         collCursor = sourceClient[thisDb['name']].list_collections()
         for thisColl in collCursor:
             #print(thisColl)
@@ -154,6 +156,7 @@ def catalogger(appConfig,sourceClient,targetClient):
 
     endTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
     processColl.update_one({'type':logName,'id':logId},{'$set':{'status':'COMPLETED','endTime':endTime}})
+    logIt(logName,logId,"COMPLETED - stopping",appConfig,targetClient)
 
 
 def inspector(appConfig,sourceClient,targetClient):
@@ -183,23 +186,27 @@ def inspector(appConfig,sourceClient,targetClient):
     while not allDone:
         thisCollection = targetColl.find_one_and_update({'status':'CATALOGGED'},{'$set':{'status':'INSPECTING'}})
         if thisCollection == None:
-            # wait and try again
-            if appConfig['verboseLogging']:
-                logIt(logName,logId,'no work found # {}'.format(numNoDocuments),appConfig)
-            numNoDocuments += 1
-            if numNoDocuments >= numWorkCheckAttempts:
-                allDone = True
-            else:
+            # check if any remaining collections needing inspecting and if any cataloggers are still running
+            uninspectedCollections = targetColl.count_documents({'status':'CATALOGGED'})
+            runningCataloggers = processColl.count_documents({'type':'CATALOGGER','status':{'$ne':'COMPLETED'}})
+
+            if (uninspectedCollections != 0) or (runningCataloggers != 0):
+                if appConfig['verboseLogging']:
+                    logIt(logName,logId,'no work found but {} uninspected collections and {} running cataloggers'.format(uninspectedCollections,runningCataloggers),appConfig,targetClient)
                 time.sleep(numWorkCheckSecondsBetween)
+            else:
+                allDone = True
+
             continue
-        logIt(logName,logId,'inspecting {}.{}'.format(thisCollection['database'],thisCollection['collection']),appConfig)
+
+        logIt(logName,logId,'inspecting {}.{}'.format(thisCollection['database'],thisCollection['collection']),appConfig,targetClient)
         numNoDocuments = 0
 
         db = sourceClient[thisCollection['database']]
         col = db[thisCollection['collection']]
         collStats = db.command("collStats",thisCollection['collection'])
         numDocuments = collStats['count']
-        avgObjSize = int(collStats['avgObjSize'])
+        avgObjSize = max(int(collStats['avgObjSize']),1)
         rowsPerChunk = int(chunkBytesTarget / avgObjSize)
         size = collStats['size']
         storageSize = collStats['storageSize']
@@ -224,6 +231,7 @@ def inspector(appConfig,sourceClient,targetClient):
 
     endTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
     processColl.update_one({'type':logName,'id':logId},{'$set':{'status':'COMPLETED','endTime':endTime}})
+    logIt(logName,logId,"COMPLETED - stopping",appConfig,targetClient)
 
 
 def segmenter(appConfig,threadNum,sourceClient,targetClient):
@@ -255,25 +263,25 @@ def segmenter(appConfig,threadNum,sourceClient,targetClient):
         if thisCollection == None:
             # wait and try again
             if appConfig['verboseLogging']:
-                logIt(logName,logId,'no work found # {}'.format(numNoDocuments),appConfig)
+                logIt(logName,logId,'no work found # {}'.format(numNoDocuments),appConfig,targetClient)
             numNoDocuments += 1
             if numNoDocuments >= numWorkCheckAttempts:
                 allDone = True
             else:
                 time.sleep(numWorkCheckSecondsBetween)
             continue
-        logIt(logName,logId,'segmenting {}.{}'.format(thisCollection['database'],thisCollection['collection']),appConfig)
+        logIt(logName,logId,'segmenting {}.{}'.format(thisCollection['database'],thisCollection['collection']),appConfig,targetClient)
         numNoDocuments = 0
 
         # we have a collection to segment
         if appConfig['mathSegments'] and (thisCollection['minIdType'] != 'objectId' or thisCollection['maxIdType'] != 'objectId'):
             # math segmentation only available for pure objectId _id collections
-            logIt(logName,logId,'math segmenting not allowed for {}.{} | {} to {} _id datatypes not supported | performing old school segmenting'.format(thisCollection['database'],thisCollection['collection'],thisCollection['minIdType'],thisCollection['maxIdType']),appConfig)
-            numSegments = segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,threadNum)
+            logIt(logName,logId,'math segmenting not allowed for {}.{} | {} to {} _id datatypes not supported | performing old school segmenting'.format(thisCollection['database'],thisCollection['collection'],thisCollection['minIdType'],thisCollection['maxIdType']),appConfig,targetClient)
+            numSegments = segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,threadNum,targetClient)
         elif appConfig['mathSegments']:
-            numSegments = segmentCollectionUsingMaths(appConfig,thisCollection,sourceClient,targetDb,threadNum)
+            numSegments = segmentCollectionUsingMaths(appConfig,thisCollection,sourceClient,targetDb,threadNum,targetClient)
         else:
-            numSegments = segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,threadNum)
+            numSegments = segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,threadNum,targetClient)
         endTime = time.time()
 
         targetColl.update_one({'_id':thisCollection['_id']},
@@ -285,9 +293,10 @@ def segmenter(appConfig,threadNum,sourceClient,targetClient):
 
     endTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
     processColl.update_one({'type':logName,'id':logId},{'$set':{'status':'COMPLETED','endTime':endTime}})
+    logIt(logName,logId,"COMPLETED - stopping",appConfig,targetClient)
         
 
-def segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,threadNum):
+def segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,threadNum,targetClient):
     # get boundaries by performing server-side skips
     warnings.filterwarnings("ignore","You appear to be connected to a DocumentDB cluster.")
 
@@ -307,9 +316,9 @@ def segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,th
     avgObjSize = thisCollection['avgObjSize']
     rowsPerChunk = thisCollection['rowsPerChunk']
 
-    logIt(logName,logId,"collection {}.{} contains {} documents".format(sourceDb,sourceColl,numDocuments),appConfig)
-    logIt(logName,logId,"calculated {} documents for a {} GB chunk of {} average object (bytes)".format(rowsPerChunk,chunkGbTarget,avgObjSize),appConfig)
-    logIt(logName,logId,"segmenting {}.{} via skips".format(sourceDb,sourceColl),appConfig)
+    logIt(logName,logId,"collection {}.{} contains {} documents".format(sourceDb,sourceColl,numDocuments),appConfig,targetClient)
+    logIt(logName,logId,"calculated {} documents for a {} GB chunk of {} average object (bytes)".format(rowsPerChunk,chunkGbTarget,avgObjSize),appConfig,targetClient)
+    logIt(logName,logId,"segmenting {}.{} via skips".format(sourceDb,sourceColl),appConfig,targetClient)
 
     allDone = False
 
@@ -354,12 +363,12 @@ def segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,th
         elapsedSecs = int(time.time() - queryStartTime)
         estimatedSecsToDone = max(0,int(((100/pctDone)*elapsedSecs)-elapsedSecs))
         numBoundaries += 1
-        logIt(logName,logId,"ns {}.{} | boundary {:3d} - {} {} | done in approximately {} seconds".format(sourceDb,sourceColl,numBoundaries,type(currentId),currentId,estimatedSecsToDone),appConfig)
+        logIt(logName,logId,"ns {}.{} | boundary {:3d} - {} {} | done in approximately {} seconds".format(sourceDb,sourceColl,numBoundaries,type(currentId),currentId,estimatedSecsToDone),appConfig,targetClient)
 
     return numBoundaries+1
 
 
-def segmentCollectionUsingMaths(appConfig,thisCollection,sourceClient,targetDb,threadNum):
+def segmentCollectionUsingMaths(appConfig,thisCollection,sourceClient,targetDb,threadNum,targetClient):
     # get boundaries by mathematically chunking the keyspace
     warnings.filterwarnings("ignore","You appear to be connected to a DocumentDB cluster.")
 
@@ -381,9 +390,9 @@ def segmentCollectionUsingMaths(appConfig,thisCollection,sourceClient,targetDb,t
     size = thisCollection['size']
     numCalculatedSegments = int(size / (chunkGbTarget * (1024 ** 3)))+1
 
-    logIt(logName,logId,"collection {}.{} contains {} documents".format(sourceDb,sourceColl,numDocuments),appConfig)
-    logIt(logName,logId,"calculated {} documents for a {} GB chunk of {} average object (bytes)".format(rowsPerChunk,chunkGbTarget,avgObjSize),appConfig)
-    logIt(logName,logId,"segmenting {}.{} mathematically into {} segments".format(sourceDb,sourceColl,numCalculatedSegments),appConfig)
+    logIt(logName,logId,"collection {}.{} contains {} documents".format(sourceDb,sourceColl,numDocuments),appConfig,targetClient)
+    logIt(logName,logId,"calculated {} documents for a {} GB chunk of {} average object (bytes)".format(rowsPerChunk,chunkGbTarget,avgObjSize),appConfig,targetClient)
+    logIt(logName,logId,"segmenting {}.{} mathematically into {} segments".format(sourceDb,sourceColl,numCalculatedSegments),appConfig,targetClient)
 
     allDone = False
 
@@ -450,7 +459,7 @@ def loader(processNum, appConfig):
         if thisSegment == None:
             # wait and try again
             if appConfig['verboseLogging']:
-                logIt(logName,logId,'no work found # {}'.format(numNoDocuments),appConfig)
+                logIt(logName,logId,'no work found # {}'.format(numNoDocuments),appConfig,targetClient)
             numNoDocuments += 1
             if numNoDocuments >= numWorkCheckAttempts:
                 allDone = True
@@ -458,7 +467,7 @@ def loader(processNum, appConfig):
                 time.sleep(numWorkCheckSecondsBetween)
             continue
 
-        logIt(logName,logId,'started loading segment {} of {}.{}'.format(thisSegment['segment'],thisSegment['database'],thisSegment['collection']),appConfig)
+        logIt(logName,logId,'started loading segment {} of {}.{}'.format(thisSegment['segment'],thisSegment['database'],thisSegment['collection']),appConfig,targetClient)
 
         # we have a segment to load
         numDocumentsLoaded,numBytesLoaded = loadSegment(appConfig,thisSegment,sourceClient,targetClient,processNum,dryRun)
@@ -474,10 +483,11 @@ def loader(processNum, appConfig):
 
         statusColl.update_one({'_id':1},{'$inc':{'migratedDocuments':numDocumentsLoaded,'migratedBytes':numBytesLoaded,'migratedSegments':1}})
 
-        logIt(logName,logId,'finished loading segment {} of {}.{}'.format(thisSegment['segment'],thisSegment['database'],thisSegment['collection']),appConfig)
+        logIt(logName,logId,'finished loading segment {} of {}.{}'.format(thisSegment['segment'],thisSegment['database'],thisSegment['collection']),appConfig,targetClient)
 
     endTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
     processColl.update_one({'type':logName,'id':logId},{'$set':{'status':'COMPLETED','endTime':endTime}})
+    logIt(logName,logId,"COMPLETED - stopping",appConfig,targetClient)
 
     sourceClient.close()
     targetClient.close()
