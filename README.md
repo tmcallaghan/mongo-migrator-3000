@@ -30,7 +30,7 @@ change data capture (CDC)
 - [ ] updates as updates, no fullDocumentLookup
 
 observability
-- all via persistence in target
+- [ ] all via persistence in target
 - [ ] tui
 - [ ] web page
 - [ ] aws cloudwatch
