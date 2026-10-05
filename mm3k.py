@@ -335,7 +335,12 @@ def segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,th
 
     while not allDone:
         startTime = time.time()
-        currentId = col.find_one(filter={"_id":{"$gt":currentId}},projection={"_id":True},sort=[("_id",pymongo.ASCENDING)],skip=rowsPerChunk)
+        result = col.find_one(filter={"_id":{"$gt":currentId}},projection={"_id":True},sort=[("_id",pymongo.ASCENDING)],skip=rowsPerChunk)
+        #result = col.find(filter={"_id":{"$gt":currentId}},projection={"_id":True},sort=[("_id",pymongo.ASCENDING)],skip=rowsPerChunk,limit=1)
+        if result is None:
+            currentId = None
+        else:
+            currentId = result["_id"]
         endTime = time.time()
         numSeconds = endTime - startTime
 
@@ -354,10 +359,10 @@ def segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,th
             continue
         else:
             # create segment
-            result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':numBoundaries+1,'minId':priorId,'maxId':currentId['_id'],'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(endTime,tz=dt.timezone.utc),'segmentSeconds':numSeconds,'status':'SEGMENTED','avgObjSize':avgObjSize})
+            result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':numBoundaries+1,'minId':priorId,'maxId':currentId,'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(endTime,tz=dt.timezone.utc),'segmentSeconds':numSeconds,'status':'SEGMENTED','avgObjSize':avgObjSize})
             result = statusColl.update_one({'_id':1},{'$inc':{'totalSegments':1}})
 
-        priorId = currentId['_id']
+        priorId = currentId
         numDocsTotal += rowsPerChunk
         pctDone = numDocsTotal/(numDocuments - rowsPerChunk)*100
         elapsedSecs = int(time.time() - queryStartTime)
@@ -581,6 +586,8 @@ def loadSegment(appConfig,thisSegment,sourceClient,targetClient,processNum,dryRu
 
 
 def main():
+    warnings.filterwarnings("ignore","You appear to be connected to a DocumentDB cluster.")
+
     parser = argparse.ArgumentParser(description='Mongo migrator 3000')
 
     parser.add_argument('--source-uri',required=True,type=str,help='Source URI')
