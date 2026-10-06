@@ -207,7 +207,7 @@ def inspector(appConfig,sourceClient,targetClient):
         collStats = db.command("collStats",thisCollection['collection'])
         numDocuments = collStats['count']
         avgObjSize = max(int(collStats['avgObjSize']),1)
-        rowsPerChunk = int(chunkBytesTarget / avgObjSize)
+        docsPerChunk = int(chunkBytesTarget / avgObjSize)
         size = collStats['size']
         storageSize = collStats['storageSize']
 
@@ -219,7 +219,7 @@ def inspector(appConfig,sourceClient,targetClient):
                               {'$set':{'status':'INSPECTED',
                                        'numDocuments':numDocuments,
                                        'avgObjSize':avgObjSize,
-                                       'rowsPerChunk':rowsPerChunk,
+                                       'docsPerChunk':docsPerChunk,
                                        'size':size,
                                        'storageSize':storageSize,
                                        'minId':idFirst['_id'],
@@ -314,10 +314,10 @@ def segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,th
 
     numDocuments = thisCollection['numDocuments']
     avgObjSize = thisCollection['avgObjSize']
-    rowsPerChunk = thisCollection['rowsPerChunk']
+    docsPerChunk = thisCollection['docsPerChunk']
 
     logIt(logName,logId,"collection {}.{} contains {} documents".format(sourceDb,sourceColl,numDocuments),appConfig,targetClient)
-    logIt(logName,logId,"calculated {} documents for a {} GB chunk of {} average object (bytes)".format(rowsPerChunk,chunkGbTarget,avgObjSize),appConfig,targetClient)
+    logIt(logName,logId,"calculated {} documents for a {} GB chunk of {} average object (bytes)".format(docsPerChunk,chunkGbTarget,avgObjSize),appConfig,targetClient)
     logIt(logName,logId,"segmenting {}.{} via skips".format(sourceDb,sourceColl),appConfig,targetClient)
 
     allDone = False
@@ -335,8 +335,8 @@ def segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,th
 
     while not allDone:
         startTime = time.time()
-        result = col.find_one(filter={"_id":{"$gt":currentId}},projection={"_id":True},sort=[("_id",pymongo.ASCENDING)],skip=rowsPerChunk)
-        #result = col.find(filter={"_id":{"$gt":currentId}},projection={"_id":True},sort=[("_id",pymongo.ASCENDING)],skip=rowsPerChunk,limit=1)
+        result = col.find_one(filter={"_id":{"$gt":currentId}},projection={"_id":True},sort=[("_id",pymongo.ASCENDING)],skip=docsPerChunk)
+        #result = col.find(filter={"_id":{"$gt":currentId}},projection={"_id":True},sort=[("_id",pymongo.ASCENDING)],skip=docsPerChunk,limit=1)
         if result is None:
             currentId = None
         else:
@@ -363,8 +363,8 @@ def segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,th
             result = statusColl.update_one({'_id':1},{'$inc':{'totalSegments':1}})
 
         priorId = currentId
-        numDocsTotal += rowsPerChunk
-        pctDone = numDocsTotal/(numDocuments - rowsPerChunk)*100
+        numDocsTotal += docsPerChunk
+        pctDone = numDocsTotal/(numDocuments - docsPerChunk)*100
         elapsedSecs = int(time.time() - queryStartTime)
         estimatedSecsToDone = max(0,int(((100/pctDone)*elapsedSecs)-elapsedSecs))
         numBoundaries += 1
@@ -391,12 +391,12 @@ def segmentCollectionUsingMaths(appConfig,thisCollection,sourceClient,targetDb,t
 
     numDocuments = thisCollection['numDocuments']
     avgObjSize = thisCollection['avgObjSize']
-    rowsPerChunk = thisCollection['rowsPerChunk']
+    docsPerChunk = thisCollection['docsPerChunk']
     size = thisCollection['size']
     numCalculatedSegments = int(size / (chunkGbTarget * (1024 ** 3)))+1
 
     logIt(logName,logId,"collection {}.{} contains {} documents".format(sourceDb,sourceColl,numDocuments),appConfig,targetClient)
-    logIt(logName,logId,"calculated {} documents for a {} GB chunk of {} average object (bytes)".format(rowsPerChunk,chunkGbTarget,avgObjSize),appConfig,targetClient)
+    logIt(logName,logId,"calculated {} documents for a {} GB chunk of {} average object (bytes)".format(docsPerChunk,chunkGbTarget,avgObjSize),appConfig,targetClient)
     logIt(logName,logId,"segmenting {}.{} mathematically into {} segments".format(sourceDb,sourceColl,numCalculatedSegments),appConfig,targetClient)
 
     allDone = False
