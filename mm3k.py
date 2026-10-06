@@ -41,10 +41,12 @@ def coordinator(appConfig,sourceClient,targetClient):
     statusColl = targetDb['status']
     processColl = targetDb['process']
     segmentsColl = targetDb['segments']
+    loadMetricsColl = targetDb['loadMetrics']
 
     feedbackSeconds = appConfig['feedbackSeconds']
 
     startTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
+    metricsLastId = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
 
     statusColl.insert_one({'_id':1,'status':'RUNNING','totalCollections':0,'totalDocuments':0,'totalBytes':0,'totalSegments':0,'migratedCollections':0,'migratedDocuments':0,'migratedBytes':0,'migratedSegments':0,'startTime':startTime})
     processColl.insert_one({'type':logName,'id':logId,'status':'RUNNING','startTime':startTime})
@@ -61,6 +63,7 @@ def coordinator(appConfig,sourceClient,targetClient):
             allDone = True
             continue
 
+        # global metrics
         result = statusColl.find_one({'_id':1})
         migratedDocuments = result['migratedDocuments']
         totalDocuments = result['totalDocuments']
@@ -85,7 +88,17 @@ def coordinator(appConfig,sourceClient,targetClient):
             intDocumentsPerSecond = int(intDocuments / intElapsedSeconds)
             intGigabitsPerSecond = intBytes * 8 / (1024 ** 3)
 
-        logIt(logName,logId,"tot docs = {:,d} | tot migrated {:,d} docs at {:,d} ips | int migrated {:,d} docs at {:,d} ips | segments {:,d} of {:,d} | tot Gbps {:.2f} | int Gbps {:.2f} | procs {:,d}".format(totalDocuments,migratedDocuments,totDocumentsPerSecond,intDocuments,intDocumentsPerSecond,migratedSegments,totalSegments,totGigabitsPerSecond,intGigabitsPerSecond,runningProcesses),appConfig,targetClient)
+        # interval metrics
+        resultLoadMetrics = loadMetricsColl.find_one(filter={"_id":{"gt":metricsLastId}},sort=[("_id",pymongo.DESCENDING)],skip=1)
+        if resultLoadMetrics is None or resultLoadMetrics['seconds'] == 0:
+            intervalGbps = 0.0
+            intervalIps = 0
+        else:
+            metricsLastId = resultLoadMetrics['_id']
+            intervalGbps = resultLoadMetrics['bytes'] * 8 / (1024 ** 3) 
+            intervalIps = resultLoadMetrics['inserts'] // resultLoadMetrics['seconds']
+
+        logIt(logName,logId,"tot docs = {:,d} | tot migrated {:,d} docs at {:,d} ips | segments {:,d} of {:,d} | tot Gbps {:.2f} | procs {:,d} | int {:,d} ips @ {:.2f} Gbps".format(totalDocuments,migratedDocuments,totDocumentsPerSecond,migratedSegments,totalSegments,totGigabitsPerSecond,runningProcesses,intervalIps,intervalGbps),appConfig,targetClient)
 
         priorIntervalTime = time.time()
         priorMigratedDocuments = migratedDocuments
