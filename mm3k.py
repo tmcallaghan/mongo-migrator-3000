@@ -89,7 +89,7 @@ def coordinator(appConfig,sourceClient,targetClient):
             intGigabitsPerSecond = intBytes * 8 / (1024 ** 3)
 
         # interval metrics
-        resultLoadMetrics = loadMetricsColl.find_one(filter={"_id":{"gt":metricsLastId}},sort=[("_id",pymongo.DESCENDING)],skip=1)
+        resultLoadMetrics = loadMetricsColl.find_one(filter={"_id":{"$gt":metricsLastId}},sort=[("_id",pymongo.DESCENDING)],skip=1)
         if resultLoadMetrics is None or resultLoadMetrics['seconds'] == 0:
             intervalGbps = 0.0
             intervalIps = 0
@@ -169,7 +169,8 @@ def catalogger(appConfig,sourceClient,targetClient):
 
     endTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
     processColl.update_one({'type':logName,'id':logId},{'$set':{'status':'COMPLETED','endTime':endTime}})
-    logIt(logName,logId,"COMPLETED - stopping",appConfig,targetClient)
+    if appConfig['verboseLogging']:
+        logIt(logName,logId,"COMPLETED - stopping",appConfig,targetClient)
 
 
 def inspector(appConfig,sourceClient,targetClient):
@@ -244,7 +245,8 @@ def inspector(appConfig,sourceClient,targetClient):
 
     endTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
     processColl.update_one({'type':logName,'id':logId},{'$set':{'status':'COMPLETED','endTime':endTime}})
-    logIt(logName,logId,"COMPLETED - stopping",appConfig,targetClient)
+    if appConfig['verboseLogging']:
+        logIt(logName,logId,"COMPLETED - stopping",appConfig,targetClient)
 
 
 def segmenter(appConfig,threadNum,sourceClient,targetClient):
@@ -306,7 +308,8 @@ def segmenter(appConfig,threadNum,sourceClient,targetClient):
 
     endTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
     processColl.update_one({'type':logName,'id':logId},{'$set':{'status':'COMPLETED','endTime':endTime}})
-    logIt(logName,logId,"COMPLETED - stopping",appConfig,targetClient)
+    if appConfig['verboseLogging']:
+        logIt(logName,logId,"COMPLETED - stopping",appConfig,targetClient)
         
 
 def segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,threadNum,targetClient):
@@ -505,7 +508,8 @@ def loader(processNum, appConfig):
 
     endTime = dt.datetime.fromtimestamp(time.time(),tz=dt.timezone.utc)
     processColl.update_one({'type':logName,'id':logId},{'$set':{'status':'COMPLETED','endTime':endTime}})
-    logIt(logName,logId,"COMPLETED - stopping",appConfig,targetClient)
+    if appConfig['verboseLogging']:
+        logIt(logName,logId,"COMPLETED - stopping",appConfig,targetClient)
 
     sourceClient.close()
     targetClient.close()
