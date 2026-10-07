@@ -96,10 +96,10 @@ def coordinator(appConfig,sourceClient,targetClient):
             intervalIps = 0
         else:
             metricsLastId = resultLoadMetrics['_id']
-            intervalGbps = resultLoadMetrics['bytes'] * 8 / (1024 ** 3) 
+            intervalGbps = resultLoadMetrics['bytes'] * 8 / (1024 ** 3) / resultLoadMetrics['seconds']
             intervalIps = resultLoadMetrics['inserts'] // resultLoadMetrics['seconds']
 
-        logIt(logName,logId,"tot docs = {:,d} | tot migrated {:,d} docs at {:,d} ips | segments {:,d} of {:,d} | tot Gbps {:.2f} | procs {:,d} | int {:,d} ips @ {:.2f} Gbps".format(totalDocuments,migratedDocuments,totDocumentsPerSecond,migratedSegments,totalSegments,totGigabitsPerSecond,runningProcesses,intervalIps,intervalGbps),appConfig,targetClient,False)
+        logIt(logName,logId,"tot docs = {:,d} | tot migrated {:,d} docs at {:,d} ips @ {:.3f} Gbps | segments {:,d} of {:,d} | procs {:,d} | int {:,d} ips @ {:.3f} Gbps".format(totalDocuments,migratedDocuments,totDocumentsPerSecond,totGigabitsPerSecond,migratedSegments,totalSegments,runningProcesses,intervalIps,intervalGbps),appConfig,targetClient,False)
 
         priorIntervalTime = time.time()
         priorMigratedDocuments = migratedDocuments
@@ -228,10 +228,14 @@ def inspector(appConfig,sourceClient,targetClient):
         storageSize = collStats['storageSize']
 
         # get min _id, max _id, and _id data types
-        cursorFirst = col.aggregate([{"$sort":{"_id":pymongo.ASCENDING}},{"$project":{"_id":True,"idType":{"$type":"$_id"}}},{"$limit":1}])
-        idFirst = next(cursorFirst,{"_id":None,"idType":None})
-        cursorLast = col.aggregate([{"$sort":{"_id":pymongo.DESCENDING}},{"$project":{"_id":True,"idType":{"$type":"$_id"}}},{"$limit":1}])
-        idLast = next(cursorFirst,{"_id":None,"idType":None})
+        try:
+            idFirst = col.aggregate([{"$sort":{"_id":pymongo.ASCENDING}},{"$project":{"_id":True,"idType":{"$type":"$_id"}}},{"$limit":1}]).next()
+        except StopIteration:
+            idFirst = {"_id":None,"idType":None}
+        try:
+            idLast = col.aggregate([{"$sort":{"_id":pymongo.DESCENDING}},{"$project":{"_id":True,"idType":{"$type":"$_id"}}},{"$limit":1}]).next()
+        except:
+            idLast = {"_id":None,"idType":None}
 
         targetColl.update_one({'_id':thisCollection['_id']},
                               {'$set':{'status':'INSPECTED',
@@ -302,11 +306,13 @@ def segmenter(appConfig,threadNum,sourceClient,targetClient):
         logIt(logName,logId,'segmenting {}.{}'.format(thisCollection['database'],thisCollection['collection']),appConfig,targetClient,True)
 
         # we have a collection to segment
-        if appConfig['mathSegments'] and (thisCollection['minIdType'] != 'objectId' or thisCollection['maxIdType'] != 'objectId'):
-            # math segmentation only available for pure objectId _id collections
+        if appConfig['mathSegments'] and (thisCollection['minIdType'] not in ['int','objectId'] or thisCollection['maxIdType'] not in ['int','objectId']):
+            # math segmentation only available for pure objectId and int based _id collections
             logIt(logName,logId,'math segmenting not allowed for {}.{} | {} to {} _id datatypes not supported | performing old school segmenting'.format(thisCollection['database'],thisCollection['collection'],thisCollection['minIdType'],thisCollection['maxIdType']),appConfig,targetClient,True)
             numSegments = segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,threadNum,targetClient)
-        elif appConfig['mathSegments']:
+        elif appConfig['mathSegments'] and thisCollection['minIdType'] == 'objectId' and thisCollection['maxIdType'] == 'objectId':
+            numSegments = segmentCollectionUsingMaths(appConfig,thisCollection,sourceClient,targetDb,threadNum,targetClient)
+        elif appConfig['mathSegments'] and thisCollection['minIdType'] == 'int' and thisCollection['maxIdType'] == 'int':
             numSegments = segmentCollectionUsingMaths(appConfig,thisCollection,sourceClient,targetDb,threadNum,targetClient)
         else:
             numSegments = segmentCollectionOldSchool(appConfig,thisCollection,sourceClient,targetDb,threadNum,targetClient)
@@ -441,18 +447,35 @@ def segmentCollectionUsingMaths(appConfig,thisCollection,sourceClient,targetDb,t
         result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':1,'minId':minId,'maxId':maxId,'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentSeconds':0,'status':'SEGMENTED','avgObjSize':avgObjSize})
     else:
         # calculate the segments
-        intMinId = int(str(minId),16)
-        intMaxId = int(str(maxId),16)
+        if thisCollection['minIdType'] == 'objectId':
+            # objectId
+            intMinId = int(str(minId),16)
+            intMaxId = int(str(maxId),16)
+        else:
+            # int
+            intMinId = minId
+            intMaxId = maxId
+
         idDiff = int(intMaxId - intMinId)
         idDiffInc = int(idDiff / numCalculatedSegments)
         intPriorId = intMinId
+
         for loop in range(numCalculatedSegments):
-            result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':loop+1,'minId':ObjectId(hex(intPriorId)[2:].zfill(24)),'maxId':ObjectId(hex(intPriorId+idDiffInc)[2:].zfill(24)),'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentSeconds':0,'status':'SEGMENTED','avgObjSize':avgObjSize})
+            if thisCollection['minIdType'] == 'objectId':
+                result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':loop+1,'minId':ObjectId(hex(intPriorId)[2:].zfill(24)),'maxId':ObjectId(hex(intPriorId+idDiffInc)[2:].zfill(24)),'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentSeconds':0,'status':'SEGMENTED','avgObjSize':avgObjSize})
+            else:
+                result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':loop+1,'minId':intPriorId,'maxId':intPriorId+idDiffInc,'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentSeconds':0,'status':'SEGMENTED','avgObjSize':avgObjSize})
+
             intPriorId += idDiffInc
+
         if intPriorId < intMaxId:
             # create final segment
             numCalculatedSegments += 1
-            result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':numCalculatedSegments,'minId':ObjectId(hex(intPriorId)[2:].zfill(24)),'maxId':maxId,'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentSeconds':0,'status':'SEGMENTED','avgObjSize':avgObjSize})
+
+            if thisCollection['minIdType'] == 'objectId':
+                result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':numCalculatedSegments,'minId':ObjectId(hex(intPriorId)[2:].zfill(24)),'maxId':maxId,'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentSeconds':0,'status':'SEGMENTED','avgObjSize':avgObjSize})
+            else:
+                result = targetColl.insert_one({'database':sourceDb,'collection':sourceColl,'segment':numCalculatedSegments,'minId':intPriorId,'maxId':maxId,'segmentStartTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentEndTime':dt.datetime.fromtimestamp(startTime,tz=dt.timezone.utc),'segmentSeconds':0,'status':'SEGMENTED','avgObjSize':avgObjSize})
 
     result = statusColl.update_one({'_id':1},{'$inc':{'totalSegments':numCalculatedSegments}})
 
