@@ -228,8 +228,10 @@ def inspector(appConfig,sourceClient,targetClient):
         storageSize = collStats['storageSize']
 
         # get min _id, max _id, and _id data types
-        idFirst = col.aggregate([{"$sort":{"_id":pymongo.ASCENDING}},{"$project":{"_id":True,"idType":{"$type":"$_id"}}},{"$limit":1}]).next()
-        idLast = col.aggregate([{"$sort":{"_id":pymongo.DESCENDING}},{"$project":{"_id":True,"idType":{"$type":"$_id"}}},{"$limit":1}]).next()
+        cursorFirst = col.aggregate([{"$sort":{"_id":pymongo.ASCENDING}},{"$project":{"_id":True,"idType":{"$type":"$_id"}}},{"$limit":1}])
+        idFirst = next(cursorFirst,{"_id":None,"idType":None})
+        cursorLast = col.aggregate([{"$sort":{"_id":pymongo.DESCENDING}},{"$project":{"_id":True,"idType":{"$type":"$_id"}}},{"$limit":1}])
+        idLast = next(cursorFirst,{"_id":None,"idType":None})
 
         targetColl.update_one({'_id':thisCollection['_id']},
                               {'$set':{'status':'INSPECTED',
