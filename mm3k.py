@@ -654,16 +654,15 @@ def main():
     parser.add_argument('--source-uri',required=True,type=str,help='Source URI')
     parser.add_argument('--target-uri',required=True,type=str,help='Target URI')
     parser.add_argument('--verbose',required=False,action='store_true',help='Enable verbose logging')
-    parser.add_argument('--num-full-load-workers',required=False,default=10,type=int,help='Number of workers performing full load')
-    parser.add_argument('--chunk-gb-target',required=False,default=1.0,type=float,help='Target/maximum size for each full load chunk in gigabytes')
+    parser.add_argument('--chunk-gb-target',required=False,default=0.5,type=float,help='Target/maximum size for each full load chunk in gigabytes')
     parser.add_argument('--mm3k-database',required=False,type=str,default='mm3k-state',help='Source URI')
 
     parser.add_argument('--num-segmenters',required=False,type=int,default=10,help='Maximum number of concurrent segmenters')
-    parser.add_argument('--num-loaders',required=False,type=int,default=10,help='Maxiumum number of concurrent loadersd')
+    parser.add_argument('--num-loaders',required=False,type=int,default=30,help='Maxiumum number of concurrent loadersd')
                         
     #parser.add_argument('--source-namespace',required=True,type=str,help='Source Namespace as <database>.<collection>')
     #parser.add_argument('--target-namespace',required=False,type=str,help='Target Namespace as <database>.<collection>, defaults to --source-namespace')
-    parser.add_argument('--feedback-seconds',required=False,type=int,default=60,help='Number of seconds between feedback output')
+    parser.add_argument('--feedback-seconds',required=False,type=int,default=15,help='Number of seconds between feedback output')
     parser.add_argument('--max-inserts-per-batch',required=False,type=int,default=200,help='Maximum number of inserts to include in a single batch')
     parser.add_argument('--dry-run',required=False,action='store_true',help='Read only, do not apply to target (except --mm3k-database)')
     #parser.add_argument('--create-cloudwatch-metrics',required=False,action='store_true',help='Create CloudWatch metrics')
@@ -689,7 +688,6 @@ def main():
     #else:
     #    appConfig['targetNs'] = args.target_namespace
     appConfig['verboseLogging'] = args.verbose
-    appConfig['numFullLoadWorkers'] = int(args.num_full_load_workers)
     appConfig['chunkGbTarget'] = float(args.chunk_gb_target)
     appConfig['chunkBytesTarget'] = int(args.chunk_gb_target * (1024 ** 3))
     appConfig['mm3kDatabase'] = args.mm3k_database
